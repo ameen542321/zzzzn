@@ -15,14 +15,13 @@ use Illuminate\Support\Collection;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use App\Services\EmployeeLogService;
 use App\Services\ShiftLifecycleService;
 use App\Services\Stores\StoreAccessService;
 use App\Services\Stores\ActiveAccountantService;
 use App\Services\Shifts\ShiftGapInfoService;
 use App\Services\Shifts\ShiftGapRequestService;
-use App\Services\Accounting\SalesCostService;
+use App\Services\Accounting\FinancialSummaryService;
 use App\Http\Controllers\Employees\EmployeeService;
 
 class UserDashboardController extends Controller
@@ -217,20 +216,19 @@ class UserDashboardController extends Controller
             ->forAccountingDate(today()->toDateString());
 
         $salesToday = (float) (clone $salesQuery)->sum('paid_amount');
-        $productsCostToday = array_sum(app(SalesCostService::class)->soldProductsCostByStoreForPeriod(
+        $dailyFinancialMetrics = app(FinancialSummaryService::class)->storeMetricsForPeriod(
             $storeIds,
             today()->startOfDay(),
             today()->endOfDay(),
             self::COLLECTED_SALE_TYPES
-        ));
+        );
+        $productsCostToday = (float) $dailyFinancialMetrics['totals']['products_cost'];
 
         return [
             'salesToday' => $salesToday,
             'dailySalesOperationsCount' => (int) (clone $salesQuery)->count(),
             'productsCostToday' => $productsCostToday,
-            'expensesToday' => (float) Expense::whereIn('store_id', $storeIds)
-                ->forAccountingDate(today()->toDateString())
-                ->sum('amount'),
+            'expensesToday' => (float) $dailyFinancialMetrics['totals']['expenses'],
             'profitToday' => $salesToday - $productsCostToday,
         ];
     }
@@ -249,73 +247,35 @@ class UserDashboardController extends Controller
             function () use ($storeIds) {
                 $monthStart = now()->startOfMonth();
                 $monthEnd = now()->endOfMonth();
-                $salesByStore = $this->sumCollectedSalesByStore($storeIds, $monthStart, $monthEnd);
-                $productsCostByStore = app(SalesCostService::class)->soldProductsCostByStoreForPeriod(
+                $monthlyFinancialMetrics = app(FinancialSummaryService::class)->storeMetricsForPeriod(
                     $storeIds,
                     $monthStart,
                     $monthEnd,
                     self::COLLECTED_SALE_TYPES
                 );
-                $expensesByStore = $this->sumByStoreForPeriod(
-                    'expenses',
-                    'amount',
-                    $storeIds,
-                    $monthStart,
-                    $monthEnd
-                );
-                $ownerPurchasesByStore = $this->sumByStoreForPeriod(
-                    'purchases',
-                    'cost',
-                    $storeIds,
-                    $monthStart,
-                    $monthEnd
-                );
-                $accountantConsumptionByStore = Sale::query()
-                    ->excludeManualInvoiceEntries()
-                    ->whereIn('store_id', $storeIds)
-                    ->betweenAccountingDates($monthStart, $monthEnd)
-                    ->where('sale_type', 'internal_use')
-                    ->groupBy('store_id')
-                    ->selectRaw('store_id, COALESCE(SUM(total), 0) as aggregate')
-                    ->pluck('aggregate', 'store_id');
 
-                $storeMetrics = [];
-                foreach ($storeIds as $storeId) {
-                    $sales = (float) ($salesByStore[$storeId] ?? 0);
-                    $cost = (float) ($productsCostByStore[$storeId] ?? 0);
-                    $expenses = (float) ($expensesByStore[$storeId] ?? 0);
-                    $purchases = (float) ($ownerPurchasesByStore[$storeId] ?? 0);
-                    $consumption = (float) ($accountantConsumptionByStore[$storeId] ?? 0);
+                $storeMetrics = collect($monthlyFinancialMetrics['metrics_by_store'])
+                    ->map(fn (array $storeMetrics) => [
+                        'sales_month' => $storeMetrics['sales'],
+                        'products_cost_month' => $storeMetrics['products_cost'],
+                        'expenses_month' => $storeMetrics['expenses'],
+                        'monthly_owner_purchases' => $storeMetrics['owner_purchases'],
+                        'monthly_accountant_consumption' => $storeMetrics['internal_use'],
+                        'monthly_purchases_consumption' => $storeMetrics['purchases_and_internal_use'],
+                        'profit_month' => $storeMetrics['profit'],
+                    ])
+                    ->all();
 
-                    $storeMetrics[$storeId] = [
-                        'sales_month' => $sales,
-                        'products_cost_month' => $cost,
-                        'expenses_month' => $expenses,
-                        'monthly_owner_purchases' => $purchases,
-                        'monthly_accountant_consumption' => $consumption,
-                        'monthly_purchases_consumption' => $purchases + $consumption,
-                        'profit_month' => $sales - $cost - $expenses - $purchases - $consumption,
-                    ];
-                }
-
-                $salesMonth = (float) $salesByStore->sum();
-                $productsCostMonth = array_sum(array_column($storeMetrics, 'products_cost_month'));
-                $expensesMonth = (float) $expensesByStore->sum();
-                $monthlyOwnerPurchases = (float) $ownerPurchasesByStore->sum();
-                $monthlyAccountantConsumption = (float) $accountantConsumptionByStore->sum();
-                $monthlyPurchasesAndConsumption = $monthlyOwnerPurchases + $monthlyAccountantConsumption;
+                $monthlyTotals = $monthlyFinancialMetrics['totals'];
 
                 return [
                     'totals' => [
-                        'salesMonth' => $salesMonth,
-                        'expensesMonth' => $expensesMonth,
-                        'profitMonth' => $salesMonth
-                            - $productsCostMonth
-                            - $expensesMonth
-                            - $monthlyPurchasesAndConsumption,
-                        'monthlyOwnerPurchases' => $monthlyOwnerPurchases,
-                        'monthlyAccountantConsumption' => $monthlyAccountantConsumption,
-                        'monthlyPurchasesAndConsumption' => $monthlyPurchasesAndConsumption,
+                        'salesMonth' => $monthlyTotals['sales'],
+                        'expensesMonth' => $monthlyTotals['expenses'],
+                        'profitMonth' => $monthlyTotals['profit'],
+                        'monthlyOwnerPurchases' => $monthlyTotals['owner_purchases'],
+                        'monthlyAccountantConsumption' => $monthlyTotals['internal_use'],
+                        'monthlyPurchasesAndConsumption' => $monthlyTotals['purchases_and_internal_use'],
                     ],
                     'store_metrics' => $storeMetrics,
                 ];
@@ -368,7 +328,7 @@ class UserDashboardController extends Controller
                     ->where('person_id', $employee->id)
                     ->where('person_type', Employee::class);
 
-                $this->applyAccountingPeriodToTable($withdrawalsQuery, 'employee_withdrawals', $periodStart, $periodEnd);
+                app(FinancialSummaryService::class)->applyAccountingPeriodToTable($withdrawalsQuery, 'employee_withdrawals', $periodStart, $periodEnd);
 
                 $withdrawalsTotal = (float) $withdrawalsQuery->sum('amount');
                 $absenceDays = (int) ($absenceDaysByEmployee[$employee->id] ?? 0);
@@ -417,7 +377,7 @@ class UserDashboardController extends Controller
             ->whereIn('store_id', $storeIds)
             ->where('person_type', Employee::class);
 
-        $this->applyAccountingPeriodToTable($monthlyWorkerWithdrawalsQuery, 'employee_withdrawals', $periodStart, $periodEnd);
+        app(FinancialSummaryService::class)->applyAccountingPeriodToTable($monthlyWorkerWithdrawalsQuery, 'employee_withdrawals', $periodStart, $periodEnd);
 
         $monthlyWorkerWithdrawals = (float) $monthlyWorkerWithdrawalsQuery->sum('amount');
         $monthlyAbsenceDeductions = (float) $employeeMonthlyWithdrawals->sum('absence_deduction');
@@ -488,7 +448,7 @@ class UserDashboardController extends Controller
                     })
                     ->whereNull('products.deleted_at');
 
-                $this->applyAccountingPeriodToTable($topProductsQuery, 'sales', now()->startOfMonth(), now()->endOfMonth());
+                app(FinancialSummaryService::class)->applyAccountingPeriodToTable($topProductsQuery, 'sales', now()->startOfMonth(), now()->endOfMonth());
 
                 return $topProductsQuery
                     ->groupBy('sales.store_id', 'stores.name', 'products.id', 'products.name')
@@ -525,20 +485,15 @@ class UserDashboardController extends Controller
         $storeIds = $stores->pluck('id');
         $todayStart = today()->startOfDay();
         $todayEnd = today()->endOfDay();
-        $salesTodayByStore = $this->sumCollectedSalesByStore($storeIds, $todayStart, $todayEnd);
-        $productsCostTodayByStore = app(SalesCostService::class)->soldProductsCostByStoreForPeriod(
+        $dailyFinancialMetrics = app(FinancialSummaryService::class)->storeMetricsForPeriod(
             $storeIds,
             $todayStart,
             $todayEnd,
             self::COLLECTED_SALE_TYPES
         );
-        $expensesTodayByStore = $this->sumByStoreForPeriod(
-            'expenses',
-            'amount',
-            $storeIds,
-            $todayStart,
-            $todayEnd
-        );
+        $salesTodayByStore = $dailyFinancialMetrics['sales_by_store'];
+        $productsCostTodayByStore = $dailyFinancialMetrics['products_cost_by_store'];
+        $expensesTodayByStore = $dailyFinancialMetrics['expenses_by_store'];
         return $stores->map(function ($store) use (
             $salesTodayByStore,
             $productsCostTodayByStore,
@@ -562,71 +517,6 @@ class UserDashboardController extends Controller
                 'salaries_month' => (float) ($salariesByStore[$storeId] ?? 0),
             ], $month);
         })->values()->all();
-    }
-
-    /**
-     * تجميع المبيعات المحصلة حسب المتجر لفترة محددة.
-     */
-    private function sumCollectedSalesByStore(Collection $storeIds, $start, $end): Collection
-    {
-        return Sale::query()
-            ->collectedDashboardSales()
-            ->whereIn('store_id', $storeIds)
-            ->betweenAccountingDates($start, $end)
-            ->groupBy('store_id')
-            ->selectRaw('store_id, COALESCE(SUM(paid_amount), 0) as aggregate')
-            ->pluck('aggregate', 'store_id');
-    }
-
-    /**
-     * تجميع عمود مالي حسب المتجر لفترة محددة.
-     */
-    private function sumByStoreForPeriod(
-        string $table,
-        string $amountColumn,
-        Collection $storeIds,
-        $start,
-        $end
-    ): Collection {
-        $query = DB::table($table)
-            ->whereIn('store_id', $storeIds);
-
-        $this->applyAccountingPeriodToTable($query, $table, $start, $end);
-
-        return $query
-            ->groupBy('store_id')
-            ->selectRaw("store_id, COALESCE(SUM({$amountColumn}), 0) as aggregate")
-            ->pluck('aggregate', 'store_id');
-    }
-
-
-    /**
-     * تطبيق فترة محاسبية على استعلامات Query Builder التي لا تستخدم موديلات Eloquent.
-     */
-    private function applyAccountingPeriodToTable($query, string $table, $start, $end): void
-    {
-        static $hasBusinessDate = [];
-
-        if (! array_key_exists($table, $hasBusinessDate)) {
-            $hasBusinessDate[$table] = Schema::hasColumn($table, 'business_date');
-        }
-
-        if (! $hasBusinessDate[$table]) {
-            $query->whereBetween("{$table}.created_at", [
-                \Carbon\Carbon::parse($start)->startOfDay(),
-                \Carbon\Carbon::parse($end)->endOfDay(),
-            ]);
-
-            return;
-        }
-
-        $startDate = \Carbon\Carbon::parse($start)->toDateString();
-        $endDate = \Carbon\Carbon::parse($end)->toDateString();
-
-        $query->whereRaw(
-            "COALESCE({$table}.business_date, DATE({$table}.created_at)) BETWEEN ? AND ?",
-            [$startDate, $endDate]
-        );
     }
 
     /**
