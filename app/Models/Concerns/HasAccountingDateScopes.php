@@ -9,14 +9,18 @@ trait HasAccountingDateScopes
     /**
      * نطاق التاريخ المحاسبي: يستخدم business_date عند توفره مع رجوع آمن إلى created_at للبيانات القديمة.
      */
-    public function scopeForAccountingDate($query, $date)
+    public function scopeForAccountingDate($query, $date, bool $includeLegacyCreatedAtDate = true)
     {
-        return $query->where(function ($query) use ($date) {
-            $query->whereDate('business_date', $date)
-                ->orWhere(function ($legacyQuery) use ($date) {
+        return $query->where(function ($query) use ($date, $includeLegacyCreatedAtDate) {
+            $query->whereDate('business_date', $date);
+
+            if ($includeLegacyCreatedAtDate) {
+                // Fallback للبيانات القديمة فقط: العمليات الجديدة يجب أن تحمل business_date صريحًا.
+                $query->orWhere(function ($legacyQuery) use ($date) {
                     $legacyQuery->whereNull('business_date')
                         ->whereDate('created_at', $date);
                 });
+            }
         });
     }
 

@@ -538,28 +538,19 @@ class StoreController extends Controller
             if (($operationCounts['sales_count'] + $operationCounts['expenses_count'] + $operationCounts['withdrawals_count']) > 0) {
                 // إغلاق المالك يعتمد بيانات اليوم المحدد سواء كان فارغًا أو يحتوي عمليات، ولا يوجد إغلاق آلي بدون طلب المالك.
                 $salesQuery = Sale::where('store_id', $store->id)
-                    ->where(function ($query) use ($date) {
-                        $query->whereDate('business_date', $date)
-                            ->orWhere(function ($legacyQuery) use ($date) {
-                                $legacyQuery->whereNull('business_date')
-                                    ->whereDate('created_at', $date);
-                            });
-                    })
+                    ->forAccountingDate($date)
                     ->whereNull('daily_balance_id')
-                    ->where(function ($query) {
-                        $query->whereNull('description')
-                            ->orWhere('description', '!=', 'manual_invoice_entry');
-                    });
+                    ->excludeManualInvoiceEntries();
 
                 $totalSales = (float) (clone $salesQuery)->sum('paid_amount');
                 $cashSales = (float) (clone $salesQuery)->where('sale_type', 'cash')->sum('paid_amount')
                     + (float) (clone $salesQuery)->where('sale_type', 'mixed')->sum('cash_amount');
                 $expenses = (float) Expense::where('store_id', $store->id)
-                    ->whereDate('business_date', $date)
+                    ->forAccountingDate($date)
                     ->whereNull('daily_balance_id')
                     ->sum('amount');
                 $withdrawals = (float) Withdrawal::where('store_id', $store->id)
-                    ->whereDate('business_date', $date)
+                    ->forAccountingDate($date)
                     ->whereNull('daily_balance_id')
                     ->sum('amount');
                 $expectedCash = $cashSales - $expenses - $withdrawals;

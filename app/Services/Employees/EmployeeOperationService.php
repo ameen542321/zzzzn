@@ -23,13 +23,7 @@ class EmployeeOperationService
             ->whereDate('date', $operationDate->toDateString())
             ->where('amount', $data['amount'])
             ->where('description', $description)
-            ->where(function ($query) use ($operationDate) {
-                $query->whereDate('business_date', $operationDate->toDateString())
-                    ->orWhere(function ($legacyQuery) use ($operationDate) {
-                        $legacyQuery->whereNull('business_date')
-                            ->whereDate('created_at', $operationDate->toDateString());
-                    });
-            })
+            ->forAccountingDate($operationDate->toDateString())
             ->exists();
 
         if ($exists) {

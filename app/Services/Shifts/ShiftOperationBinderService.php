@@ -7,7 +7,6 @@ use App\Models\Expense;
 use App\Models\Sale;
 use App\Models\Withdrawal;
 use Carbon\Carbon;
-use Illuminate\Database\Eloquent\Builder;
 
 class ShiftOperationBinderService
 {
@@ -22,35 +21,32 @@ class ShiftOperationBinderService
         bool $includeLegacyCreatedAtDate = false,
         bool $excludeManualInvoiceEntries = false
     ): array {
-        $date = Carbon::parse($businessDate)->toDateString();
-        $payload = [
-            'business_date' => $date,
+        $operationsAccountingDate = Carbon::parse($businessDate)->toDateString();
+        $linkOperationsToClosedBalancePayload = [
+            'business_date' => $operationsAccountingDate,
             'daily_balance_id' => $balance->id,
         ];
 
-        $sales = Sale::query()
+        $unlinkedSalesForBusinessDate = Sale::query()
             ->where('store_id', $balance->store_id)
             ->whereNull('daily_balance_id')
-            ->when($excludeManualInvoiceEntries, fn (Builder $query) => $query->excludeManualInvoiceEntries());
-        $this->applyBusinessDateFilter($sales, $date, $includeLegacyCreatedAtDate);
-        $salesCount = $sales->update($payload);
+            ->forAccountingDate($operationsAccountingDate, $includeLegacyCreatedAtDate)
+            ->when($excludeManualInvoiceEntries, fn ($query) => $query->excludeManualInvoiceEntries());
 
-        $expenses = Expense::query()
+        $unlinkedExpensesForBusinessDate = Expense::query()
             ->where('store_id', $balance->store_id)
-            ->whereNull('daily_balance_id');
-        $this->applyBusinessDateFilter($expenses, $date, $includeLegacyCreatedAtDate);
-        $expensesCount = $expenses->update($payload);
+            ->whereNull('daily_balance_id')
+            ->forAccountingDate($operationsAccountingDate, $includeLegacyCreatedAtDate);
 
-        $withdrawals = Withdrawal::query()
+        $unlinkedWithdrawalsForBusinessDate = Withdrawal::query()
             ->where('store_id', $balance->store_id)
-            ->whereNull('daily_balance_id');
-        $this->applyBusinessDateFilter($withdrawals, $date, $includeLegacyCreatedAtDate);
-        $withdrawalsCount = $withdrawals->update($payload);
+            ->whereNull('daily_balance_id')
+            ->forAccountingDate($operationsAccountingDate, $includeLegacyCreatedAtDate);
 
         return [
-            'sales' => $salesCount,
-            'expenses' => $expensesCount,
-            'withdrawals' => $withdrawalsCount,
+            'sales' => $unlinkedSalesForBusinessDate->update($linkOperationsToClosedBalancePayload),
+            'expenses' => $unlinkedExpensesForBusinessDate->update($linkOperationsToClosedBalancePayload),
+            'withdrawals' => $unlinkedWithdrawalsForBusinessDate->update($linkOperationsToClosedBalancePayload),
         ];
     }
 
@@ -59,22 +55,22 @@ class ShiftOperationBinderService
      */
     public function attachByWindow(DailyBalance $balance, Carbon $start, Carbon $end, string $businessDate): array
     {
-        $date = Carbon::parse($businessDate)->toDateString();
-        $payload = [
-            'business_date' => $date,
+        $operationsAccountingDate = Carbon::parse($businessDate)->toDateString();
+        $linkOperationsToClosedBalancePayload = [
+            'business_date' => $operationsAccountingDate,
             'daily_balance_id' => $balance->id,
         ];
 
         return [
             'sales' => Sale::where('store_id', $balance->store_id)
                 ->whereBetween('created_at', [$start, $end])
-                ->update($payload),
+                ->update($linkOperationsToClosedBalancePayload),
             'expenses' => Expense::where('store_id', $balance->store_id)
                 ->whereBetween('created_at', [$start, $end])
-                ->update($payload),
+                ->update($linkOperationsToClosedBalancePayload),
             'withdrawals' => Withdrawal::where('store_id', $balance->store_id)
                 ->whereBetween('created_at', [$start, $end])
-                ->update($payload),
+                ->update($linkOperationsToClosedBalancePayload),
         ];
     }
 
@@ -83,71 +79,58 @@ class ShiftOperationBinderService
      */
     public function moveBalanceOperations(DailyBalance $balance, string $targetBusinessDate, ?string $sourceBusinessDate = null): array
     {
-        $date = Carbon::parse($targetBusinessDate)->toDateString();
-        $month = Carbon::parse($date)->format('Y-m');
+        $targetOperationsAccountingDate = Carbon::parse($targetBusinessDate)->toDateString();
+        $targetWithdrawalMonth = Carbon::parse($targetOperationsAccountingDate)->format('Y-m');
 
-        $counts = [
-            'sales' => Sale::where('daily_balance_id', $balance->id)->update(['business_date' => $date]),
-            'expenses' => Expense::where('daily_balance_id', $balance->id)->update(['business_date' => $date]),
+        $updatedOperationsCounts = [
+            'sales' => Sale::where('daily_balance_id', $balance->id)->update(['business_date' => $targetOperationsAccountingDate]),
+            'expenses' => Expense::where('daily_balance_id', $balance->id)->update(['business_date' => $targetOperationsAccountingDate]),
             'withdrawals' => Withdrawal::where('daily_balance_id', $balance->id)->update([
-                'business_date' => $date,
-                'date' => $date,
-                'month' => $month,
+                'business_date' => $targetOperationsAccountingDate,
+                'date' => $targetOperationsAccountingDate,
+                'month' => $targetWithdrawalMonth,
             ]),
         ];
 
-        $start = $balance->start_time ? Carbon::parse($balance->start_time) : null;
-        $end = $balance->end_time ? Carbon::parse($balance->end_time) : null;
+        $shiftStartedAt = $balance->start_time ? Carbon::parse($balance->start_time) : null;
+        $shiftClosedAt = $balance->end_time ? Carbon::parse($balance->end_time) : null;
 
-        if (! $start || ! $end) {
-            return $counts;
+        if (! $shiftStartedAt || ! $shiftClosedAt) {
+            return $updatedOperationsCounts;
         }
 
-        $payload = [
-            'business_date' => $date,
+        $linkLegacyOperationsToMovedBalancePayload = [
+            'business_date' => $targetOperationsAccountingDate,
             'daily_balance_id' => $balance->id,
         ];
 
-        $counts['legacy_sales'] = Sale::where('store_id', $balance->store_id)
+        $updatedOperationsCounts['legacy_sales'] = Sale::where('store_id', $balance->store_id)
             ->whereNull('daily_balance_id')
-            ->whereBetween('created_at', [$start, $end])
-            ->update($payload);
+            ->whereBetween('created_at', [$shiftStartedAt, $shiftClosedAt])
+            ->update($linkLegacyOperationsToMovedBalancePayload);
 
-        $counts['legacy_expenses'] = Expense::where('store_id', $balance->store_id)
+        $updatedOperationsCounts['legacy_expenses'] = Expense::where('store_id', $balance->store_id)
             ->whereNull('daily_balance_id')
-            ->whereBetween('created_at', [$start, $end])
-            ->update($payload);
+            ->whereBetween('created_at', [$shiftStartedAt, $shiftClosedAt])
+            ->update($linkLegacyOperationsToMovedBalancePayload);
 
-        $counts['legacy_withdrawals'] = Withdrawal::where('store_id', $balance->store_id)
+        // السحوبات القديمة قد تكون مفلترة بتاريخ السحب date بدل created_at، لذلك نحافظ على المسارين.
+        $updatedOperationsCounts['legacy_withdrawals'] = Withdrawal::where('store_id', $balance->store_id)
             ->whereNull('daily_balance_id')
-            ->where(function (Builder $query) use ($start, $end, $sourceBusinessDate) {
-                $query->whereBetween('created_at', [$start, $end]);
+            ->where(function ($query) use ($shiftStartedAt, $shiftClosedAt, $sourceBusinessDate) {
+                $query->whereBetween('created_at', [$shiftStartedAt, $shiftClosedAt]);
 
                 if ($sourceBusinessDate) {
                     $query->orWhereDate('date', $sourceBusinessDate);
                 }
             })
             ->update([
-                'business_date' => $date,
+                'business_date' => $targetOperationsAccountingDate,
                 'daily_balance_id' => $balance->id,
-                'date' => $date,
-                'month' => $month,
+                'date' => $targetOperationsAccountingDate,
+                'month' => $targetWithdrawalMonth,
             ]);
 
-        return $counts;
-    }
-
-    private function applyBusinessDateFilter(Builder $query, string $date, bool $includeLegacyCreatedAtDate): void
-    {
-        $query->where(function (Builder $dateQuery) use ($date, $includeLegacyCreatedAtDate) {
-            $dateQuery->whereDate('business_date', $date);
-
-            if ($includeLegacyCreatedAtDate) {
-                $dateQuery->orWhere(function (Builder $legacyQuery) use ($date) {
-                    $legacyQuery->whereNull('business_date')
-                        ->whereDate('created_at', $date);
-                });
-            }
-        });
+        return $updatedOperationsCounts;
     }
 }
