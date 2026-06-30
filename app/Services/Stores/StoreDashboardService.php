@@ -1,0 +1,187 @@
+<?php
+
+namespace App\Services\Stores;
+
+use App\Models\Accountant;
+use App\Models\Category;
+use App\Models\Employee;
+use App\Models\Log;
+use App\Models\Product;
+use App\Models\Sale;
+use App\Models\Store;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+
+class StoreDashboardService
+{
+    private const INCLUDED_SALE_TYPES = ['cash', 'card', 'credit', 'mixed'];
+
+    public function summary(Store $store): array
+    {
+        $now = now();
+
+        return array_merge([
+            'accountantsCount' => Accountant::where('store_id', $store->id)->count(),
+            'employeesCount' => Employee::where('store_id', $store->id)->count(),
+            'categoriesCount' => Category::where('store_id', $store->id)->count(),
+            'productsCount' => Product::where('store_id', $store->id)->count(),
+            'consumptionCount' => $this->consumptionCount($store),
+            'todaySales' => $this->billableSales($store)->whereDate('created_at', today())->sum('paid_amount'),
+            'monthSales' => $this->monthlyBillableSales($store, $now)->sum('paid_amount'),
+            'invoicesCount' => $this->monthlyBillableSales($store, $now)->count(),
+            'totalProfit' => $this->monthlySales($store, $now)
+                ->selectRaw('COALESCE(SUM(paid_amount - ((products_total + labor_total) - profit)), 0) as total_profit')
+                ->value('total_profit'),
+            'topProducts' => $this->topProducts($store, $now),
+            'operations' => Log::where('store_id', $store->id)
+                ->with('user')
+                ->latest()
+                ->limit(30)
+                ->get(),
+        ], $this->sevenDaysChart($store));
+    }
+
+    private function billableSales(Store $store)
+    {
+        return $this->salesWithoutManualInvoiceEntries($store)
+            ->whereIn('sale_type', self::INCLUDED_SALE_TYPES);
+    }
+
+    private function monthlyBillableSales(Store $store, Carbon $now)
+    {
+        return $this->billableSales($store)
+            ->whereYear('created_at', $now->year)
+            ->whereMonth('created_at', $now->month);
+    }
+
+    private function monthlySales(Store $store, Carbon $now)
+    {
+        return $this->salesWithoutManualInvoiceEntries($store)
+            ->whereYear('created_at', $now->year)
+            ->whereMonth('created_at', $now->month);
+    }
+
+    private function salesWithoutManualInvoiceEntries(Store $store)
+    {
+        return Sale::where('store_id', $store->id)
+            ->where(function ($query) {
+                $query->whereNull('description')
+                    ->orWhere('description', '!=', 'manual_invoice_entry');
+            });
+    }
+
+    private function consumptionCount(Store $store): int
+    {
+        return $this->salesWithoutManualInvoiceEntries($store)
+            ->where('sale_type', 'internal_use')
+            ->count();
+    }
+
+    private function topProducts(Store $store, Carbon $now)
+    {
+        return Product::where('store_id', $store->id)
+            ->withCount(['saleItems as total_sold' => function ($query) use ($now) {
+                $query->select(DB::raw('SUM(quantity)'))
+                    ->whereHas('sale', function ($saleQuery) use ($now) {
+                        $saleQuery->whereMonth('created_at', $now->month)
+                            ->whereYear('created_at', $now->year);
+                    });
+            }])
+            ->orderBy('total_sold', 'desc')
+            ->take(10)
+            ->get();
+    }
+
+    private function sevenDaysChart(Store $store): array
+    {
+        $sevenDaysStats = $this->billableSales($store)
+            ->where('created_at', '>=', now()->subDays(7))
+            ->select(
+                DB::raw('DATE(created_at) as date'),
+                DB::raw('SUM(paid_amount) as total_sales'),
+                DB::raw('COALESCE(SUM(paid_amount - ((products_total + labor_total) - profit)), 0) as total_profit')
+            )
+            ->groupBy('date')
+            ->get();
+
+        $chartLabels = [];
+        $chartData = [];
+        $profitData = [];
+
+        for ($i = 6; $i >= 0; $i--) {
+            $date = now()->subDays($i)->format('Y-m-d');
+            $dayName = now()->subDays($i)->translatedFormat('l');
+            $stats = $sevenDaysStats->firstWhere('date', $date);
+
+            $chartLabels[] = $dayName;
+            $chartData[] = $stats ? (float) $stats->total_sales : 0;
+            $profitData[] = $stats ? (float) $stats->total_profit : 0;
+        }
+
+        return compact('chartLabels', 'chartData', 'profitData');
+    }
+
+    public function advancedStats(Store $store): array
+    {
+        $lowStockProducts = Product::where('store_id', $store->id)
+            ->lowStock()
+            ->orderBy('quantity')
+            ->limit(10)
+            ->get(['id', 'name', 'quantity', 'min_stock', 'price', 'roll_length']);
+
+        return [
+            'monthly_sales' => $this->advancedMonthlySales($store),
+            'product_stats' => $this->productStats($store),
+            'employee_stats' => $this->employeeStats($store),
+            'low_stock_products' => $lowStockProducts,
+            'low_stock_count' => Product::where('store_id', $store->id)->lowStock()->count(),
+        ];
+    }
+
+    private function advancedMonthlySales(Store $store)
+    {
+        return Sale::where('store_id', $store->id)
+            ->where(function ($query) {
+                $query->whereNull('description')
+                    ->orWhere('description', '!=', 'manual_invoice_entry');
+            })
+            ->select(
+                DB::raw('MONTH(created_at) as month'),
+                DB::raw('YEAR(created_at) as year'),
+                DB::raw('SUM(paid_amount) as total_sales'),
+                DB::raw('COUNT(*) as sales_count'),
+                DB::raw('COALESCE(SUM(paid_amount - ((products_total + labor_total) - profit)), 0) as total_profit')
+            )
+            ->whereYear('created_at', date('Y'))
+            ->groupBy('year', 'month')
+            ->orderBy('year', 'desc')
+            ->orderBy('month', 'desc')
+            ->get();
+    }
+
+    private function productStats(Store $store)
+    {
+        return Product::where('store_id', $store->id)
+            ->selectRaw("
+                COUNT(*) as total_products,
+                SUM(quantity) as total_quantity,
+                SUM(CASE
+                    WHEN product_type = 'fractional' AND roll_length > 0 THEN (quantity / roll_length) * price
+                    ELSE (quantity * price)
+                END) as total_value,
+                AVG(price) as average_price
+            ")
+            ->first();
+    }
+
+    private function employeeStats(Store $store)
+    {
+        return Employee::where('store_id', $store->id)
+            ->selectRaw("
+                COUNT(*) as total_employees,
+                SUM(salary) as total_salary,
+                AVG(salary) as average_salary
+            ")
+            ->first();
+    }
+}
