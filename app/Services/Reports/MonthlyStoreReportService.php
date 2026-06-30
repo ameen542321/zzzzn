@@ -8,7 +8,7 @@ use App\Models\Purchase;
 use App\Models\Sale;
 use App\Models\Store;
 use App\Models\StoreTransfer;
-use App\Services\Accounting\SalesCostService;
+use App\Services\Accounting\FinancialSummaryService;
 
 class MonthlyStoreReportService
 {
@@ -39,40 +39,37 @@ class MonthlyStoreReportService
      */
     public function buildMonthlyReportData(Store $store, string $month, $start, $end, bool $withDetails): array
     {
+        $includedSaleTypes = ['cash', 'card', 'credit', 'mixed'];
         $salesQuery = Sale::where('store_id', $store->id)
-            ->whereBetween('created_at', [$start, $end])
-            ->whereIn('sale_type', ['cash', 'card', 'credit', 'mixed']);
+            ->collectedDashboardSales()
+            ->betweenAccountingDates($start, $end);
 
-        $internalUseSales = (float) Sale::where('store_id', $store->id)
-            ->where('sale_type', 'internal_use')
-            ->whereBetween('created_at', [$start, $end])
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            })
-            ->sum('total');
-
-        $ownerPurchases = (float) Purchase::where('store_id', $store->id)
-            ->whereBetween('created_at', [$start, $end])
-            ->sum('cost');
-
-        $monthlySoldProductsCost = app(SalesCostService::class)->soldProductsCostForPeriod(
-            $store->id,
+        $financialMetrics = app(FinancialSummaryService::class)->storeMetricsForPeriod(
+            collect([$store->id]),
             $start,
             $end,
-            ['cash', 'card', 'credit', 'mixed']
+            $includedSaleTypes
         );
+        $storeFinancialMetrics = $financialMetrics['metrics_by_store'][$store->id] ?? [
+            'sales' => 0,
+            'products_cost' => 0,
+            'expenses' => 0,
+            'owner_purchases' => 0,
+            'internal_use' => 0,
+            'purchases_and_internal_use' => 0,
+        ];
 
+        $internalUseSales = (float) $storeFinancialMetrics['internal_use'];
+        $ownerPurchases = (float) $storeFinancialMetrics['owner_purchases'];
+        $monthlySoldProductsCost = (float) $storeFinancialMetrics['products_cost'];
         $profitDeductionTotal = $monthlySoldProductsCost;
-        $totalConsumption = $internalUseSales + $ownerPurchases;
-        $expensesTotal = (float) \App\Models\Expense::where('store_id', $store->id)
-            ->whereBetween('created_at', [$start, $end])
-            ->sum('amount');
-        $withdrawalsTotal = (float) \App\Models\Withdrawal::where('store_id', $store->id)
-            ->whereBetween('created_at', [$start, $end])
-            ->sum('amount');
+        $totalConsumption = (float) $storeFinancialMetrics['purchases_and_internal_use'];
+        $expensesTotal = (float) $storeFinancialMetrics['expenses'];
+        $withdrawalsQuery = \App\Models\Withdrawal::where('store_id', $store->id);
+        app(FinancialSummaryService::class)->applyAccountingPeriodToTable($withdrawalsQuery, 'employee_withdrawals', $start, $end);
+        $withdrawalsTotal = (float) $withdrawalsQuery->sum('amount');
         $monthlySalaries = $this->monthlyProratedSalariesTotal($store->id, $start, $end);
-        $totalSales = (float) (clone $salesQuery)->sum('paid_amount');
+        $totalSales = (float) $storeFinancialMetrics['sales'];
 
         $data = [
             'store' => $store,
@@ -197,13 +194,9 @@ class MonthlyStoreReportService
     private function monthlyDailyRows(int $storeId, $start, $end)
     {
         return Sale::where('store_id', $storeId)
-            ->whereBetween('created_at', [$start, $end])
-            ->whereIn('sale_type', ['cash', 'card', 'credit', 'mixed'])
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            })
-            ->selectRaw('DATE(created_at) as day')
+            ->collectedDashboardSales()
+            ->betweenAccountingDates($start, $end)
+            ->selectRaw('COALESCE(business_date, DATE(created_at)) as day')
             ->selectRaw('COUNT(*) as ops_count')
             ->selectRaw('COALESCE(SUM(cash_amount), 0) as cash_total')
             ->selectRaw('COALESCE(SUM(card_amount), 0) as card_total')
@@ -215,9 +208,12 @@ class MonthlyStoreReportService
 
     private function monthlyOwnerPurchaseRows(int $storeId, $start, $end)
     {
-        return Purchase::with('product:id,name')
-            ->where('store_id', $storeId)
-            ->whereBetween('created_at', [$start, $end])
+        $ownerPurchasesQuery = Purchase::with('product:id,name')
+            ->where('store_id', $storeId);
+
+        app(FinancialSummaryService::class)->applyAccountingPeriodToTable($ownerPurchasesQuery, 'purchases', $start, $end);
+
+        return $ownerPurchasesQuery
             ->orderBy('created_at')
             ->get(['id', 'product_id', 'purchase_name', 'quantity', 'cost', 'description', 'created_at']);
     }
@@ -227,11 +223,8 @@ class MonthlyStoreReportService
         return Sale::with(['items.product:id,name'])
             ->where('store_id', $storeId)
             ->where('sale_type', 'internal_use')
-            ->whereBetween('created_at', [$start, $end])
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            })
+            ->betweenAccountingDates($start, $end)
+            ->excludeManualInvoiceEntries()
             ->orderBy('created_at')
             ->get(['id', 'description', 'total', 'created_at']);
     }
@@ -239,7 +232,7 @@ class MonthlyStoreReportService
     private function monthlyExpenseRows(int $storeId, $start, $end)
     {
         return \App\Models\Expense::where('store_id', $storeId)
-            ->whereBetween('created_at', [$start, $end])
+            ->betweenAccountingDates($start, $end)
             ->orderBy('created_at')
             ->get(['id', 'description', 'amount', 'created_at']);
     }
@@ -267,10 +260,11 @@ class MonthlyStoreReportService
             ->get(['id', 'name', 'salary', 'status', 'deleted_at']);
 
         $employeeIds = $employees->pluck('id');
-        $withdrawals = \App\Models\Withdrawal::where('store_id', $storeId)
+        $withdrawalsQuery = \App\Models\Withdrawal::where('store_id', $storeId)
             ->where('person_type', Employee::class)
-            ->whereIn('person_id', $employeeIds)
-            ->whereBetween('created_at', [$start, $end])
+            ->whereIn('person_id', $employeeIds);
+        app(FinancialSummaryService::class)->applyAccountingPeriodToTable($withdrawalsQuery, 'employee_withdrawals', $start, $end);
+        $withdrawals = $withdrawalsQuery
             ->selectRaw('person_id, COALESCE(SUM(amount), 0) as total')
             ->groupBy('person_id')
             ->pluck('total', 'person_id');
