@@ -18,7 +18,6 @@ use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Validator;
 use App\Support\ArabicPdf as PDF;
-use App\Support\PaymentTypeLabel;
 use App\Services\ShiftLifecycleService;
 use App\Services\Accounting\AccountingOperationFeedService;
 use App\Services\Shifts\ShiftGapInfoService;
@@ -617,32 +616,6 @@ class DashboardController extends Controller
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="'.$filename.'"'
         ]);
-    }
-
-    private function sendReportToOwner($phone, $fileName)
-    {
-        // الرابط المباشر للملف (يجب أن يكون موقعك مرفوعاً على سيرفر حقيقي ليعمل)
-        $fileUrl = route('report.view', ['filename' => $fileName]);
-
-        // إعدادات API الواتساب (مثال UltraMsg)
-        $params = [
-            'token' => 'YOUR_ULTRAMSG_TOKEN',
-            'to'    => $phone, // رقم المالك
-            'filename' => $fileName,
-            'document' => $fileUrl,
-            'caption'  => "تقرير إقفال المتجر ليوم " . now()->format('Y-m-d')
-        ];
-
-        // إرسال الطلب (Curl أو Guzzle)
-        $curl = curl_init();
-        curl_setopt_array($curl, [
-          CURLOPT_URL => "https://api.ultramsg.com/YOUR_INSTANCE_ID/messages/document",
-          CURLOPT_POST => true,
-          CURLOPT_POSTFIELDS => http_build_query($params),
-          CURLOPT_RETURNTRANSFER => true,
-        ]);
-        $response = curl_exec($curl);
-        curl_close($curl);
     }
 
     private function getCreditCollections($storeId, $startTime, $endTime)
@@ -1388,121 +1361,6 @@ class DashboardController extends Controller
 
     return $message;
 }
-
-    private function createShiftHtmlReport($data)
-    {
-        $reportData = $data['data'];
-        $salesRows = $reportData['details_tables']['all_sales'] ?? [];
-        $salesRows = is_iterable($salesRows) ? $salesRows : [];
-
-        $cashSales = (float) ($reportData['sales_breakdown']['cash_from_new_sales'] ?? 0);
-        $cardSales = (float) ($reportData['sales_breakdown']['card_from_new_sales'] ?? 0);
-        $productsSalesValue = (float) ($reportData['products_details']['sales_value'] ?? 0);
-        $productsCostValue = (float) ($reportData['products_details']['cost_value'] ?? 0);
-        $productsProfitValue = (float) ($reportData['products_details']['profit'] ?? 0);
-        $collectionsCount = (int) ($reportData['credit_collections']['count'] ?? 0);
-        $operationsCount = (is_countable($salesRows) ? count($salesRows) : 0) + $collectionsCount;
-        $diff = (float) ($reportData['cash_details']['difference'] ?? 0);
-        $diffClass = $diff >= 0 ? 'positive' : 'negative';
-        $diffLabel = $diff > 0 ? 'فائض' : ($diff < 0 ? 'عجز' : 'مطابق');
-
-        $typeMap = collect(['cash', 'card', 'mixed', 'credit', 'internal_use'])
-            ->mapWithKeys(fn (string $type): array => [$type => PaymentTypeLabel::reportBadge($type)['label']])
-            ->all();
-
-        $html = '<!DOCTYPE html><html dir="rtl"><head><meta charset="UTF-8">
-            <style>
-                body { font-family: Arial, sans-serif; padding: 20px; direction: rtl; color: #1f2937; }
-                h1 { color: #111827; text-align: center; margin-bottom: 12px; }
-                h2 { color: #1f2937; margin: 18px 0 8px; }
-                .header { background: #f8fafc; padding: 12px; border-radius: 8px; border-right: 4px solid #0ea5e9; margin-bottom: 16px; }
-                .note { background: #fffbeb; border-right: 4px solid #f59e0b; padding: 10px; border-radius: 6px; margin-bottom: 12px; }
-                table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-                th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: center; font-size: 13px; }
-                th { background-color: #0f172a; color: #fff; }
-                .total { font-weight: bold; background-color: #f3f4f6; }
-                .negative { color: #dc2626; font-weight: bold; }
-                .positive { color: #16a34a; font-weight: bold; }
-                .muted { color: #6b7280; font-size: 12px; }
-            </style></head><body>';
-
-        $html .= '<h1>' . $data['report_title'] . '</h1>
-            <div class="header">
-                <p><strong>المتجر:</strong> ' . htmlspecialchars((string) ($data['store']->name ?? '-')) . ' | <strong>المحاسب:</strong> ' . htmlspecialchars((string) ($data['accountant']->name ?? '-')) . '</p>
-                <p><strong>الفترة:</strong> ' . htmlspecialchars((string) ($reportData['start_time'] ?? '-')) . ' → ' . htmlspecialchars((string) ($reportData['end_time'] ?? '-')) . '</p>
-            </div>';
-
-        if (!empty($reportData['notes'])) {
-            $html .= '<div class="note"><strong>ملاحظة الإغلاق:</strong> ' . nl2br(htmlspecialchars((string) $reportData['notes'])) . '</div>';
-        }
-
-        $html .= '<h2>📊 ملخص الشفت (مطابق صفحة المبيعات)</h2>
-            <table>
-                <tr><th>البند</th><th>القيمة</th></tr>
-                <tr><td>إجمالي العمليات</td><td>' . number_format((float) ($reportData['total_sales'] ?? 0), 2) . ' ريال</td></tr>
-                <tr><td>قيمة المبيعات (بسعر البيع)</td><td>' . number_format($productsSalesValue, 2) . ' ريال</td></tr>
-                <tr><td>قيمة التكلفة</td><td>' . number_format($productsCostValue, 2) . ' ريال</td></tr>
-                <tr><td>ربح المنتجات</td><td>' . number_format($productsProfitValue, 2) . ' ريال</td></tr>
-                <tr><td>عمليات الكاش</td><td>' . number_format($cashSales, 2) . ' ريال</td></tr>
-                <tr><td>عمليات الشبكة</td><td>' . number_format($cardSales, 2) . ' ريال</td></tr>
-                <tr><td>المصاريف + السحوبات</td><td>' . number_format((float) ($reportData['outgoing_today']['total'] ?? 0), 2) . ' ريال</td></tr>
-                <tr><td>عدد العمليات</td><td>' . number_format($operationsCount) . '</td></tr>
-                <tr><td>أجرة اليد</td><td>' . number_format((float) ($reportData['labor_total'] ?? 0), 2) . ' ريال</td></tr>
-                <tr class="total"><td>صافي الربح</td><td>' . number_format((float) ($reportData['net_profit'] ?? 0), 2) . ' ريال</td></tr>
-            </table>';
-
-        $html .= '<h2>🧾 تفاصيل العمليات</h2>
-            <table>
-                <tr>
-                    <th>#</th>
-                    <th>الوقت</th>
-                    <th>نوع العملية</th>
-                    <th>طريقة الدفع</th>
-                    <th>القيمة</th>
-                    <th>المستلم</th>
-                </tr>';
-
-        $index = 1;
-        foreach ($salesRows as $row) {
-            $row = (array) $row;
-            $saleType = (string) ($row['type'] ?? '');
-            $paymentLabel = $typeMap[$saleType] ?? $saleType;
-
-            $productsCount = (int) ($row['products_count'] ?? 0);
-            $laborTotal = (float) ($row['labor_total'] ?? 0);
-            $operationKind = ($laborTotal > 0 && $productsCount === 0) ? 'شغل يد' : 'منتجات';
-
-            $displayTotal = (float) ($row['total'] ?? 0);
-            $received = (float) ($row['received'] ?? 0);
-            $amountLabel = $displayTotal > 0 ? $displayTotal : $received;
-
-            $html .= '<tr>
-                <td>' . $index++ . '</td>
-                <td>' . htmlspecialchars((string) ($row['time'] ?? '--')) . '</td>
-                <td>' . htmlspecialchars($operationKind) . '</td>
-                <td>' . htmlspecialchars($paymentLabel ?: '-') . '</td>
-                <td>' . number_format($amountLabel, 2) . ' ريال</td>
-                <td>' . number_format($received, 2) . ' ريال</td>
-            </tr>';
-        }
-
-        if ($index === 1) {
-            $html .= '<tr><td colspan="6" class="muted">لا توجد عمليات ضمن هذه الفترة.</td></tr>';
-        }
-
-        $html .= '</table>';
-
-        $html .= '<h2>🏁 مطابقة الصندوق</h2>
-            <table>
-                <tr><td>الكاش المتوقع</td><td>' . number_format((float) ($reportData['cash_details']['expected'] ?? 0), 2) . ' ريال</td></tr>
-                <tr><td>الكاش الفعلي المسلم</td><td>' . number_format((float) ($reportData['cash_details']['actual'] ?? 0), 2) . ' ريال</td></tr>
-                <tr class="total"><td>الحالة</td><td class="' . $diffClass . '">' . $diffLabel . ' (' . number_format(abs($diff), 2) . ' ريال)</td></tr>
-            </table>';
-
-        $html .= '</body></html>';
-        return $html;
-    }
-
 
     public function showReport($id)
     {
