@@ -9,6 +9,8 @@ use App\Models\Store;
 use App\Services\EmployeeLogService;
 use App\Support\ArabicPdf;
 use App\Services\ShiftLifecycleService;
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 
 class ExpenseController extends Controller
@@ -20,9 +22,7 @@ class ExpenseController extends Controller
         $month = max(1, min(12, (int) ($request->month ?? now()->month)));
         $year = (int) ($request->year ?? now()->year);
 
-        $expenses = Expense::where('store_id', $storeId)
-            ->whereMonth('created_at', $month)
-            ->whereYear('created_at', $year)
+        $expenses = $this->expensesForAccountingMonth($storeId, $month, $year)
             ->latest()
             ->get();
 
@@ -44,6 +44,17 @@ class ExpenseController extends Controller
             'ownerPurchaseGroups' => $ownerPurchaseGroups,
             'ownerPurchaseTypeOptions' => array_values($this->ownerPurchaseGroupingMap()),
         ]);
+    }
+
+
+    private function expensesForAccountingMonth(int $storeId, int $month, int $year): Builder
+    {
+        $monthStart = Carbon::create($year, $month, 1)->startOfMonth();
+        $monthEnd = $monthStart->copy()->endOfMonth();
+
+        return Expense::query()
+            ->where('store_id', $storeId)
+            ->betweenAccountingDates($monthStart, $monthEnd);
     }
 
     public function store(Request $request, ?int $store = null)
@@ -132,9 +143,7 @@ class ExpenseController extends Controller
         $month = max(1, min(12, (int) ($request->month ?? now()->month)));
         $year = (int) ($request->year ?? now()->year);
 
-        $expenses = Expense::where('store_id', $storeId)
-            ->whereMonth('created_at', $month)
-            ->whereYear('created_at', $year)
+        $expenses = $this->expensesForAccountingMonth($storeId, $month, $year)
             ->latest()
             ->get();
 

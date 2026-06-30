@@ -111,15 +111,20 @@ class FinancialSummaryService
             ->pluck('aggregate', 'store_id');
     }
 
-    public function applyAccountingPeriodToTable($query, string $table, $periodStart, $periodEnd): void
+    public function applyAccountingPeriodToTable($query, string $table, $periodStart, $periodEnd, ?string $schemaTable = null): void
     {
         static $hasBusinessDate = [];
 
-        if (! array_key_exists($table, $hasBusinessDate)) {
-            $hasBusinessDate[$table] = Schema::hasColumn($table, 'business_date');
+        // $table هو الاسم المستخدم داخل الاستعلام وقد يكون alias مثل s أو purchases.
+        // $schemaTable هو اسم الجدول الحقيقي عند استخدام aliases حتى لا نفقد business_date.
+        $schemaTable ??= $table;
+        $cacheKey = $schemaTable;
+
+        if (! array_key_exists($cacheKey, $hasBusinessDate)) {
+            $hasBusinessDate[$cacheKey] = Schema::hasColumn($schemaTable, 'business_date');
         }
 
-        if (! $hasBusinessDate[$table]) {
+        if (! $hasBusinessDate[$cacheKey]) {
             $query->whereBetween("{$table}.created_at", [
                 Carbon::parse($periodStart)->startOfDay(),
                 Carbon::parse($periodEnd)->endOfDay(),
