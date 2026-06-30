@@ -5,6 +5,7 @@ namespace App\Services\Reports;
 use App\Models\Purchase;
 use App\Models\Sale;
 use App\Models\Store;
+use App\Services\Accounting\FinancialSummaryService;
 
 class ComprehensiveStoreSearchReportService
 {
@@ -20,16 +21,10 @@ class ComprehensiveStoreSearchReportService
         $startDate = $from . ' 00:00:00';
         $endDate = $to . ' 23:59:59';
 
-        $saleTypes = ['cash', 'card', 'credit', 'mixed'];
-
         $salesQuery = Sale::query()
             ->where('store_id', $store->id)
-            ->whereIn('sale_type', $saleTypes)
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            })
+            ->collectedDashboardSales()
+            ->betweenAccountingDates($startDate, $endDate)
             ->with([
                 'accountant:id,name',
                 'employee:id,name',
@@ -64,14 +59,10 @@ class ComprehensiveStoreSearchReportService
             ->first();
 
         $matchingItemsQuery = \App\Models\SaleItem::query()
-            ->whereHas('sale', function ($saleQuery) use ($store, $saleTypes, $startDate, $endDate) {
+            ->whereHas('sale', function ($saleQuery) use ($store, $startDate, $endDate) {
                 $saleQuery->where('store_id', $store->id)
-                    ->whereIn('sale_type', $saleTypes)
-                    ->whereBetween('created_at', [$startDate, $endDate])
-                    ->where(function ($query) {
-                        $query->whereNull('description')
-                            ->orWhere('description', '!=', 'manual_invoice_entry');
-                    });
+                    ->collectedDashboardSales()
+                    ->betweenAccountingDates($startDate, $endDate);
             });
 
         if ($search !== '') {
@@ -94,11 +85,8 @@ class ComprehensiveStoreSearchReportService
         $internalUseQuery = Sale::query()
             ->where('store_id', $store->id)
             ->where('sale_type', 'internal_use')
-            ->whereBetween('created_at', [$startDate, $endDate])
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            })
+            ->betweenAccountingDates($startDate, $endDate)
+            ->excludeManualInvoiceEntries()
             ->with([
                 'accountant:id,name',
                 'items.product:id,name,description,barcode',
@@ -126,8 +114,9 @@ class ComprehensiveStoreSearchReportService
 
         $ownerPurchasesQuery = Purchase::query()
             ->where('store_id', $store->id)
-            ->whereBetween('created_at', [$startDate, $endDate])
             ->with('product:id,name,description,barcode');
+
+        app(FinancialSummaryService::class)->applyAccountingPeriodToTable($ownerPurchasesQuery, 'purchases', $startDate, $endDate);
 
         if ($search !== '') {
             $ownerPurchasesQuery->where(function ($query) use ($search) {
