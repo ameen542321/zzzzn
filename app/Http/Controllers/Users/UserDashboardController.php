@@ -474,33 +474,35 @@ class UserDashboardController extends Controller
         $topSellingProducts = Cache::remember(
             "owner-dashboard:{$userId}:top-products:".now()->format('Y-m').':'.$storeIds->sort()->implode('-'),
             now()->addMinutes(5),
-            fn () => DB::table('sale_items')
-                ->join('sales', 'sale_items.sale_id', '=', 'sales.id')
-                ->join('products', 'sale_items.product_id', '=', 'products.id')
-                ->join('stores', 'sales.store_id', '=', 'stores.id')
-                ->whereIn('sales.store_id', $storeIds)
-                ->whereRaw('COALESCE(sales.business_date, DATE(sales.created_at)) BETWEEN ? AND ?', [
-                    now()->startOfMonth()->toDateString(),
-                    now()->endOfMonth()->toDateString(),
-                ])
-                ->whereIn('sales.sale_type', self::COLLECTED_SALE_TYPES)
-                ->where(function ($query) {
-                    $query->whereNull('sales.description')
-                        ->orWhere('sales.description', '!=', 'manual_invoice_entry');
-                })
-                ->whereNull('products.deleted_at')
-                ->groupBy('sales.store_id', 'stores.name', 'products.id', 'products.name')
-                ->selectRaw('sales.store_id, stores.name as store_name, products.id, products.name')
-                ->selectRaw('COUNT(DISTINCT sales.id) as operations_count')
-                ->selectRaw('COALESCE(SUM(sale_items.quantity), 0) as sold_quantity')
-                ->selectRaw('COALESCE(SUM(sale_items.total), 0) as sales_value')
-                ->get()
-                ->groupBy('store_id')
-                ->flatMap(fn ($products) => $products
-                    ->sortByDesc('sold_quantity')
-                    ->take(5)
-                    ->values())
-                ->values()
+            function () use ($storeIds) {
+                $topProductsQuery = DB::table('sale_items')
+                    ->join('sales', 'sale_items.sale_id', '=', 'sales.id')
+                    ->join('products', 'sale_items.product_id', '=', 'products.id')
+                    ->join('stores', 'sales.store_id', '=', 'stores.id')
+                    ->whereIn('sales.store_id', $storeIds)
+                    ->whereIn('sales.sale_type', self::COLLECTED_SALE_TYPES)
+                    ->where(function ($query) {
+                        $query->whereNull('sales.description')
+                            ->orWhere('sales.description', '!=', 'manual_invoice_entry');
+                    })
+                    ->whereNull('products.deleted_at');
+
+                $this->applyAccountingPeriodToTable($topProductsQuery, 'sales', now()->startOfMonth(), now()->endOfMonth());
+
+                return $topProductsQuery
+                    ->groupBy('sales.store_id', 'stores.name', 'products.id', 'products.name')
+                    ->selectRaw('sales.store_id, stores.name as store_name, products.id, products.name')
+                    ->selectRaw('COUNT(DISTINCT sales.id) as operations_count')
+                    ->selectRaw('COALESCE(SUM(sale_items.quantity), 0) as sold_quantity')
+                    ->selectRaw('COALESCE(SUM(sale_items.total), 0) as sales_value')
+                    ->get()
+                    ->groupBy('store_id')
+                    ->flatMap(fn ($products) => $products
+                        ->sortByDesc('sold_quantity')
+                        ->take(5)
+                        ->values())
+                    ->values();
+            }
         );
 
         return [
@@ -667,15 +669,15 @@ class UserDashboardController extends Controller
         $salesCosts = DB::table('sales')
             ->leftJoin('sale_items', 'sales.id', '=', 'sale_items.sale_id')
             ->whereIn('sales.store_id', $storeIds)
-            ->whereRaw('COALESCE(sales.business_date, DATE(sales.created_at)) BETWEEN ? AND ?', [
-                \Carbon\Carbon::parse($start)->toDateString(),
-                \Carbon\Carbon::parse($end)->toDateString(),
-            ])
             ->whereIn('sales.sale_type', $saleTypes)
             ->where(function ($query) {
                 $query->whereNull('sales.description')
                     ->orWhere('sales.description', '!=', 'manual_invoice_entry');
-            })
+            });
+
+        $this->applyAccountingPeriodToTable($salesCosts, 'sales', $start, $end);
+
+        $salesCosts
             ->groupBy(
                 'sales.id',
                 'sales.store_id',

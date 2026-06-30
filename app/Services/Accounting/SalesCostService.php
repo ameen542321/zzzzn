@@ -15,12 +15,9 @@ class SalesCostService
     public function soldProductsCostForPeriod(int $storeId, $periodStart, $periodEnd, array $includedSaleTypes): float
     {
         $legacySalesQuery = Sale::where('store_id', $storeId)
-            ->whereBetween('created_at', [$periodStart, $periodEnd])
+            ->betweenAccountingDates($periodStart, $periodEnd)
             ->whereIn('sale_type', $includedSaleTypes)
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            });
+            ->excludeManualInvoiceEntries();
 
         // توافق قديم: يحمي البيئات التي لم تطبق عمود sale_items.total_cost بعد.
         // خطة الحذف: بعد تثبيت بيانات التكلفة القديمة في بداية شهر 7 واعتماد العمود نهائيًا،
@@ -39,7 +36,10 @@ class SalesCostService
         $salesCostsQuery = DB::table('sales')
             ->leftJoin('sale_items', 'sales.id', '=', 'sale_items.sale_id')
             ->where('sales.store_id', $storeId)
-            ->whereBetween('sales.created_at', [$periodStart, $periodEnd])
+            ->whereRaw('COALESCE(sales.business_date, DATE(sales.created_at)) BETWEEN ? AND ?', [
+                Carbon::parse($periodStart)->toDateString(),
+                Carbon::parse($periodEnd)->toDateString(),
+            ])
             ->whereIn('sales.sale_type', $includedSaleTypes)
             ->where(function ($query) {
                 $query->whereNull('sales.description')

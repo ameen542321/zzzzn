@@ -26,7 +26,7 @@ class StoreDashboardService
             'categoriesCount' => Category::where('store_id', $store->id)->count(),
             'productsCount' => Product::where('store_id', $store->id)->count(),
             'consumptionCount' => $this->consumptionCount($store),
-            'todaySales' => $this->billableSales($store)->whereDate('created_at', today())->sum('paid_amount'),
+            'todaySales' => $this->billableSales($store)->forAccountingDate(today()->toDateString())->sum('paid_amount'),
             'monthSales' => $this->monthlyBillableSales($store, $now)->sum('paid_amount'),
             'invoicesCount' => $this->monthlyBillableSales($store, $now)->count(),
             'totalProfit' => $this->monthlySales($store, $now)
@@ -50,24 +50,19 @@ class StoreDashboardService
     private function monthlyBillableSales(Store $store, Carbon $now)
     {
         return $this->billableSales($store)
-            ->whereYear('created_at', $now->year)
-            ->whereMonth('created_at', $now->month);
+            ->betweenAccountingDates($now->copy()->startOfMonth(), $now->copy()->endOfMonth());
     }
 
     private function monthlySales(Store $store, Carbon $now)
     {
         return $this->salesWithoutManualInvoiceEntries($store)
-            ->whereYear('created_at', $now->year)
-            ->whereMonth('created_at', $now->month);
+            ->betweenAccountingDates($now->copy()->startOfMonth(), $now->copy()->endOfMonth());
     }
 
     private function salesWithoutManualInvoiceEntries(Store $store)
     {
         return Sale::where('store_id', $store->id)
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            });
+            ->excludeManualInvoiceEntries();
     }
 
     private function consumptionCount(Store $store): int
@@ -83,8 +78,7 @@ class StoreDashboardService
             ->withCount(['saleItems as total_sold' => function ($query) use ($now) {
                 $query->select(DB::raw('SUM(quantity)'))
                     ->whereHas('sale', function ($saleQuery) use ($now) {
-                        $saleQuery->whereMonth('created_at', $now->month)
-                            ->whereYear('created_at', $now->year);
+                        $saleQuery->betweenAccountingDates($now->copy()->startOfMonth(), $now->copy()->endOfMonth());
                     });
             }])
             ->orderBy('total_sold', 'desc')
@@ -94,10 +88,12 @@ class StoreDashboardService
 
     private function sevenDaysChart(Store $store): array
     {
+        $sevenDaysStart = now()->subDays(6)->startOfDay();
+        $sevenDaysEnd = now()->endOfDay();
         $sevenDaysStats = $this->billableSales($store)
-            ->where('created_at', '>=', now()->subDays(7))
+            ->betweenAccountingDates($sevenDaysStart, $sevenDaysEnd)
             ->select(
-                DB::raw('DATE(created_at) as date'),
+                DB::raw('COALESCE(business_date, DATE(created_at)) as date'),
                 DB::raw('SUM(paid_amount) as total_sales'),
                 DB::raw('COALESCE(SUM(paid_amount - ((products_total + labor_total) - profit)), 0) as total_profit')
             )
@@ -141,18 +137,15 @@ class StoreDashboardService
     private function advancedMonthlySales(Store $store)
     {
         return Sale::where('store_id', $store->id)
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            })
+            ->excludeManualInvoiceEntries()
             ->select(
-                DB::raw('MONTH(created_at) as month'),
-                DB::raw('YEAR(created_at) as year'),
+                DB::raw('MONTH(COALESCE(business_date, DATE(created_at))) as month'),
+                DB::raw('YEAR(COALESCE(business_date, DATE(created_at))) as year'),
                 DB::raw('SUM(paid_amount) as total_sales'),
                 DB::raw('COUNT(*) as sales_count'),
                 DB::raw('COALESCE(SUM(paid_amount - ((products_total + labor_total) - profit)), 0) as total_profit')
             )
-            ->whereYear('created_at', date('Y'))
+            ->whereRaw('YEAR(COALESCE(business_date, DATE(created_at))) = ?', [date('Y')])
             ->groupBy('year', 'month')
             ->orderBy('year', 'desc')
             ->orderBy('month', 'desc')

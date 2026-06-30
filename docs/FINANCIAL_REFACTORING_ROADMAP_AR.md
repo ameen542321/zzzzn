@@ -14,6 +14,7 @@
 - إنشاء حقول `business_date` و`daily_balance_id` على `sales` و`expenses` و`employee_withdrawals`.
 - وجود `ShiftLifecycleService` و`ShiftWindowService` كبداية عملية لتوحيد سياق ونوافذ الشفت.
 - استخراج `ShiftOperationBinderService` كبداية لعزل ربط عمليات الشفت من الكنترولرات.
+- توسيع استخدام `betweenAccountingDates` و`forAccountingDate` في لوحات المالك والمتجر وخدمة تكلفة المبيعات.
 - وجود `SalesCostService` كمرحلة مركزية لحساب تكلفة المبيعات اعتمادًا على `sale_items.total_cost` مع fallback للبيانات القديمة.
 - وجود خدمات تقارير متجر منفصلة، خصوصًا التقرير الشهري والبحث الشامل وملفات التقارير الحديثة.
 
