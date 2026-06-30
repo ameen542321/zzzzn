@@ -22,6 +22,7 @@ use App\Services\Stores\StoreAccessService;
 use App\Services\Stores\ActiveAccountantService;
 use App\Services\Shifts\ShiftGapInfoService;
 use App\Services\Shifts\ShiftGapRequestService;
+use App\Services\Accounting\SalesCostService;
 use App\Http\Controllers\Employees\EmployeeService;
 
 class UserDashboardController extends Controller
@@ -216,12 +217,12 @@ class UserDashboardController extends Controller
             ->forAccountingDate(today()->toDateString());
 
         $salesToday = (float) (clone $salesQuery)->sum('paid_amount');
-        $productsCostToday = $this->calculateProductsCost(
+        $productsCostToday = array_sum(app(SalesCostService::class)->soldProductsCostByStoreForPeriod(
             $storeIds,
             today()->startOfDay(),
             today()->endOfDay(),
             self::COLLECTED_SALE_TYPES
-        );
+        ));
 
         return [
             'salesToday' => $salesToday,
@@ -249,7 +250,7 @@ class UserDashboardController extends Controller
                 $monthStart = now()->startOfMonth();
                 $monthEnd = now()->endOfMonth();
                 $salesByStore = $this->sumCollectedSalesByStore($storeIds, $monthStart, $monthEnd);
-                $productsCostByStore = $this->calculateProductsCostByStore(
+                $productsCostByStore = app(SalesCostService::class)->soldProductsCostByStoreForPeriod(
                     $storeIds,
                     $monthStart,
                     $monthEnd,
@@ -525,7 +526,7 @@ class UserDashboardController extends Controller
         $todayStart = today()->startOfDay();
         $todayEnd = today()->endOfDay();
         $salesTodayByStore = $this->sumCollectedSalesByStore($storeIds, $todayStart, $todayEnd);
-        $productsCostTodayByStore = $this->calculateProductsCostByStore(
+        $productsCostTodayByStore = app(SalesCostService::class)->soldProductsCostByStoreForPeriod(
             $storeIds,
             $todayStart,
             $todayEnd,
@@ -626,88 +627,6 @@ class UserDashboardController extends Controller
             "COALESCE({$table}.business_date, DATE({$table}.created_at)) BETWEEN ? AND ?",
             [$startDate, $endDate]
         );
-    }
-
-    /**
-     * حساب إجمالي تكلفة المنتجات لجميع المتاجر المطلوبة.
-     */
-    private function calculateProductsCost($storeIds, $start, $end, array $saleTypes): float
-    {
-        return array_sum($this->calculateProductsCostByStore($storeIds, $start, $end, $saleTypes));
-    }
-
-    /**
-     * حساب تكلفة المنتجات مجمعة حسب store_id باستعلام واحد.
-     */
-    private function calculateProductsCostByStore($storeIds, $start, $end, array $saleTypes): array
-    {
-        static $hasStoredItemCosts;
-
-        $storeIds = collect($storeIds)->map(fn ($id) => (int) $id)->filter()->values();
-        if ($storeIds->isEmpty()) {
-            return [];
-        }
-
-        $hasStoredItemCosts ??= Schema::hasColumn('sale_items', 'total_cost');
-
-        if (! $hasStoredItemCosts) {
-            return Sale::query()
-                ->excludeManualInvoiceEntries()
-                ->whereIn('store_id', $storeIds)
-                ->betweenAccountingDates($start, $end)
-                ->whereIn('sale_type', $saleTypes)
-                ->where('products_total', '>', 0)
-                ->groupBy('store_id')
-                // الحل الثاني: لا نسمح لأي تكلفة تراجعية سالبة بالدخول في إجمالي تكلفة المنتجات.
-                // هذا يصحح شغل اليد والمنتجات بلا تكلفة إلى 0 بدل أن تخفض تكلفة المتجر.
-                ->selectRaw('store_id, COALESCE(SUM(GREATEST((products_total + labor_total) - profit, 0)), 0) as aggregate')
-                ->pluck('aggregate', 'store_id')
-                ->map(fn ($value) => (float) $value)
-                ->all();
-        }
-
-        $salesCosts = DB::table('sales')
-            ->leftJoin('sale_items', 'sales.id', '=', 'sale_items.sale_id')
-            ->whereIn('sales.store_id', $storeIds)
-            ->whereIn('sales.sale_type', $saleTypes)
-            ->where(function ($query) {
-                $query->whereNull('sales.description')
-                    ->orWhere('sales.description', '!=', 'manual_invoice_entry');
-            });
-
-        $this->applyAccountingPeriodToTable($salesCosts, 'sales', $start, $end);
-
-        $salesCosts
-            ->groupBy(
-                'sales.id',
-                'sales.store_id',
-                'sales.products_total',
-                'sales.labor_total',
-                'sales.profit'
-            )
-            ->selectRaw('sales.store_id')
-            ->selectRaw('COUNT(sale_items.id) as items_count')
-            ->selectRaw('SUM(CASE WHEN sale_items.total_cost IS NOT NULL THEN 1 ELSE 0 END) as costed_items_count')
-            ->selectRaw('COALESCE(SUM(sale_items.total_cost), 0) as saved_items_cost')
-            // legacy_cost يستعمل فقط عند نقص تكلفة بعض عناصر البيع، لذلك نحميه من السالب.
-            ->selectRaw('GREATEST(COALESCE((sales.products_total + sales.labor_total) - sales.profit, 0), 0) as legacy_cost');
-
-        return DB::query()
-            ->fromSub($salesCosts, 'sales_costs')
-            ->groupBy('store_id')
-            ->selectRaw('store_id')
-            ->selectRaw(
-                'COALESCE(SUM(
-                    CASE
-                        WHEN items_count = 0 THEN 0
-                        WHEN items_count = costed_items_count THEN GREATEST(saved_items_cost, 0)
-                        ELSE legacy_cost
-                    END
-                ), 0) as aggregate'
-            )
-            ->pluck('aggregate', 'store_id')
-            ->map(fn ($value) => (float) $value)
-            ->all();
     }
 
     /**
