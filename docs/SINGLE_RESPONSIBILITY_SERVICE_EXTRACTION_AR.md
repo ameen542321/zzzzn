@@ -12,6 +12,7 @@
 - `ShiftWindowService` لتوحيد نوافذ الشفت في شاشة المبيعات والتقارير المرتبطة.
 - `ShiftGapRequestService` لإدارة طلبات الشفت الناقص وحالاتها.
 - `SalesCostService` كمصدر مركزي مرحلي لتكلفة المبيعات مع fallback للبيانات القديمة.
+- `ShiftOperationBinderService` كبداية لعزل ربط المبيعات والمصروفات والسحوبات بالشفت ونقل تاريخها من الكنترولرات.
 - خدمات تقارير وبحث منفصلة مثل `MonthlyStoreReportService` و`ComprehensiveStoreSearchReportService` و`RecentReportFilesService`.
 - `AccountingOperationPresenter` و`AccountingOperationFeedService` كبداية لعزل عرض العمليات المحاسبية.
 
@@ -430,7 +431,7 @@ public function requestAccountantShiftInput(Request $request, Store $store)
 
 1. استكمال ربط كل التقارير والصفحات بـ `SalesCostService` ثم حذف حسابات التكلفة المكررة.
 2. إنشاء `AccountingPeriodQueryService` أو Scopes مكافئة لكل العمليات التي لم تنتقل بعد.
-3. استخراج `ShiftOperationBinderService` من منطق الإغلاق الموجود داخل الكنترولرات.
+3. استكمال اعتماد `ShiftOperationBinderService` في أي مسارات متبقية وإضافة اختبارات تثبيت له.
 
 هذه الخدمات تؤثر على:
 

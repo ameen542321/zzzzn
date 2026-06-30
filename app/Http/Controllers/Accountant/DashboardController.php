@@ -22,6 +22,7 @@ use App\Support\PaymentTypeLabel;
 use App\Services\ShiftLifecycleService;
 use App\Services\Accounting\AccountingOperationFeedService;
 use App\Services\Shifts\ShiftGapInfoService;
+use App\Services\Shifts\ShiftOperationBinderService;
 
 class DashboardController extends Controller
 {
@@ -333,7 +334,7 @@ class DashboardController extends Controller
                 $notes
             );
 
-            $this->attachOperationsToClosedShiftByBusinessDate($store->id, $dailyBalance, $businessDate);
+            app(ShiftOperationBinderService::class)->attachByBusinessDate($dailyBalance, $businessDate);
             $this->markActiveShiftGapResolved($dailyBalance, $businessDate);
             $waUrl = $this->generateReportAndWhatsApp($store, $accountant, $reportData);
             $this->clearShiftGapSession();
@@ -1048,7 +1049,7 @@ class DashboardController extends Controller
             'notes' => $request->notes,
         ]);
 
-        $this->attachOperationsToClosedShift($store->id, $dailyBalance, $startTime, $endTime, $businessDate);
+        app(ShiftOperationBinderService::class)->attachByWindow($dailyBalance, Carbon::parse($startTime), Carbon::parse($endTime), $businessDate);
 
         // \Log::info('DailyBalance created with ID: ' . $dailyBalance->id);
 
@@ -1197,48 +1198,6 @@ class DashboardController extends Controller
         $details['business_date'] = $businessDate;
 
         $log->update(['details' => $details]);
-    }
-
-    private function attachOperationsToClosedShiftByBusinessDate(int $storeId, DailyBalance $dailyBalance, string $businessDate): void
-    {
-        $updates = [
-            'daily_balance_id' => $dailyBalance->id,
-        ];
-
-        Sale::where('store_id', $storeId)
-            ->whereDate('business_date', $businessDate)
-            ->whereNull('daily_balance_id')
-            ->update($updates);
-
-        Expense::where('store_id', $storeId)
-            ->whereDate('business_date', $businessDate)
-            ->whereNull('daily_balance_id')
-            ->update($updates);
-
-        Withdrawal::where('store_id', $storeId)
-            ->whereDate('business_date', $businessDate)
-            ->whereNull('daily_balance_id')
-            ->update($updates);
-    }
-
-    private function attachOperationsToClosedShift($storeId, DailyBalance $dailyBalance, $startTime, $endTime, string $businessDate): void
-    {
-        $payload = [
-            'business_date' => $businessDate,
-            'daily_balance_id' => $dailyBalance->id,
-        ];
-
-        Sale::where('store_id', $storeId)
-            ->whereBetween('created_at', [$startTime, $endTime])
-            ->update($payload);
-
-        Expense::where('store_id', $storeId)
-            ->whereBetween('created_at', [$startTime, $endTime])
-            ->update($payload);
-
-        Withdrawal::where('store_id', $storeId)
-            ->whereBetween('created_at', [$startTime, $endTime])
-            ->update($payload);
     }
 
     private function calculateProductsProfit($storeId, $startTime, $endTime)
