@@ -1,4 +1,21 @@
-# نتيجة نقاش تطبيق مبدأ Single Responsibility واستخراج الخدمات
+# الأعمال المتبقية لتطبيق مبدأ Single Responsibility واستخراج الخدمات
+
+> **آخر تحديث:** 2026-06-30
+> **ملاحظة مراجعة:** تمت إزالة البنود التي ثبت وجودها في الكود من قائمة التنفيذ المتبقي، وبقيت البنود التي تحتاج استخراجًا أو توحيدًا إضافيًا.
+
+## ما اكتمل وتم حذفه من نطاق التنفيذ المتبقي
+
+تمت مراجعة الخدمات الحالية، وثبت اكتمال أو بدء اعتماد الخدمات التالية لذلك لم تعد تُعامل كأسماء مقترحة فقط:
+
+- `StoreAccessService` لإدارة وصول المالك للمتجر والتحقق من الحالة.
+- `ShiftLifecycleService` لتحديد سياق الشفت والتاريخ المحاسبي.
+- `ShiftWindowService` لتوحيد نوافذ الشفت في شاشة المبيعات والتقارير المرتبطة.
+- `ShiftGapRequestService` لإدارة طلبات الشفت الناقص وحالاتها.
+- `SalesCostService` كمصدر مركزي مرحلي لتكلفة المبيعات مع fallback للبيانات القديمة.
+- خدمات تقارير وبحث منفصلة مثل `MonthlyStoreReportService` و`ComprehensiveStoreSearchReportService` و`RecentReportFilesService`.
+- `AccountingOperationPresenter` و`AccountingOperationFeedService` كبداية لعزل عرض العمليات المحاسبية.
+
+**النتيجة:** المتبقي ليس إنشاء هذه الأسماء من الصفر، بل استكمال نقل الاستدعاءات إليها، حذف التكرار القديم، وإضافة اختبارات تثبيت حولها.
 
 ## الهدف
 
@@ -411,9 +428,9 @@ public function requestAccountantShiftInput(Request $request, Store $store)
 
 ابدأ بما يقلل اختلاف الأرقام ويمنع أخطاء التقارير:
 
-1. `SalesCostService`
-2. `AccountingPeriodQueryService`
-3. `ShiftOperationBinderService`
+1. استكمال ربط كل التقارير والصفحات بـ `SalesCostService` ثم حذف حسابات التكلفة المكررة.
+2. إنشاء `AccountingPeriodQueryService` أو Scopes مكافئة لكل العمليات التي لم تنتقل بعد.
+3. استخراج `ShiftOperationBinderService` من منطق الإغلاق الموجود داخل الكنترولرات.
 
 هذه الخدمات تؤثر على:
 
@@ -428,9 +445,9 @@ public function requestAccountantShiftInput(Request $request, Store $store)
 
 ### المرحلة 2: خدمات الشفت والطلبات
 
-4. `ShiftGapService`
-5. `ShiftGapRequestService`
-6. `CashReconciliationService`
+4. توسيع خدمات فجوات الشفت الموجودة لتغطي العرض والتنبيهات دون تكرار.
+5. استكمال اعتماد `ShiftGapRequestService` في كل مسارات الإنشاء والإلغاء وإعادة التعيين.
+6. إنشاء `CashReconciliationService`.
 
 هذه تنظف تضخم `DashboardController` و`StoreController`.
 
