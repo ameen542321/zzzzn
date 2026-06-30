@@ -1527,7 +1527,7 @@ path/to/file.php
 | `DashboardController::formatOp` | مرشحة للنقل | `AccountingOperationPresenter` | يجب توحيد أسماء المنفذين وطريقة الدفع مع `PaymentTypeLabel` |
 | استعلامات `Sale/Expense/Withdrawal` في `DailySalesController` | مرشحة للتوحيد | `AccountingOperationQueryService` | يجب الحفاظ على fallback للبيانات القديمة |
 | استعلامات `Sale/Expense/Withdrawal` في `StoreController` لمسارات الشفت | مرشحة للتوحيد | `AccountingOperationQueryService` | يجب الحذر في مسارات نقل/إغلاق الشفت لأنها تعدل بيانات |
-| `StoreDetailsService` كسلسلة استعلامات طويلة | يحتاج إعادة تصميم | `StoreFinancialSummaryService` / `StoreEmployeeSummaryService` | يجب إزالة `find` داخل `map` وتوضيح أسماء المتغيرات |
+| `StoreDetailsService` كسلسلة استعلامات طويلة | تم جزئيًا | `FinancialSummaryService` + helpers داخل الخدمة | أزيلت حسابات المبيعات/المصروفات الشهرية المباشرة و`find` داخل `map`، وما زال فصل إحصاءات المخزون والموظفين ممكنًا لاحقًا |
 
 ### 25. توحيد المستندات الثلاثة وحذف المنجز من قائمة العمل النشطة
 
@@ -1541,7 +1541,7 @@ path/to/file.php
 - إضافة `QrCodeSvg` وتوحيد مسار فواتير PDF/print بدرجة أولية.
 - إنشاء `SalesCostService` كبداية لمصدر تكلفة مركزي، مع بقاء استكمال التخلص من fallback القديم ضمن خارطة الطريق المالية.
 - إنشاء خدمات طلبات الشفت الناقص ومراجعة الشفتات، مع بقاء توحيد عمليات `Sale/Expense/Withdrawal` ضمن العمل النشط.
-- نقل ملخصات صفحة المتجر والإحصاءات المتقدمة من `StoreController`، مع بقاء مراجعة هذه الخدمات لأنها قد تكون خدمات صفحة لا خدمات مفاهيمية مشتركة.
+- نقل ملخصات صفحة المتجر والإحصاءات المتقدمة من `StoreController`، وتم ربط ملخصات `StoreDetailsService` المالية بـ `FinancialSummaryService` جزئيًا، مع بقاء مراجعة إحصاءات المخزون والموظفين لأنها قد تكون خدمات صفحة لا خدمات مفاهيمية مشتركة.
 
 #### ما يبقى ضمن قائمة العمل النشطة المشتركة بين المستندات
 

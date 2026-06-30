@@ -2,10 +2,20 @@
 
 namespace App\Services\Stores;
 
-use App\Models\Store;
-use App\Models\Sale;
-use App\Models\Category;
+use App\Models\Absence;
+use App\Models\CreditSale;
+use App\Models\DailyBalance;
+use App\Models\Debt;
 use App\Models\Employee;
+use App\Models\Invoice;
+use App\Models\Sale;
+use App\Models\StockMovement;
+use App\Models\Store;
+use App\Models\Withdrawal;
+use App\Services\Accounting\FinancialSummaryService;
+use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 
 class StoreDetailsService
 {
@@ -15,7 +25,12 @@ class StoreDetailsService
     public function build(Store $store): array
     {
         $now = now();
+        $today = today();
         $currentMonthText = $now->format('Y-m');
+        $monthStart = $now->copy()->startOfMonth();
+        $monthEnd = $now->copy()->endOfMonth();
+
+        $financialSummaryService = app(FinancialSummaryService::class);
 
         // ===== 1. إحصائيات المخزون =====
         $categoriesCount = $store->categories()->count();
@@ -26,7 +41,7 @@ class StoreDetailsService
         $trashedCount = $store->products()->onlyTrashed()->count();
         $latestProducts = $store->products()->latest()->take(5)->get();
 
-        $latestMovements = \App\Models\StockMovement::where('store_id', $store->id)->latest()->take(5)->get();
+        $latestMovements = StockMovement::where('store_id', $store->id)->latest()->take(5)->get();
 
         // قيمة المخزون: (الكمية / الطول) * السعر للمتري، أو (الكمية * السعر) للعادي
         $totalInventoryValue = $store->products()->selectRaw('SUM(
@@ -43,81 +58,91 @@ class StoreDetailsService
         $totalAccountants = $store->accountants()->count();
         $totalMonthlySalaries = $store->employees()->sum('salary') ?? 0;
 
-        $monthlyWithdrawals = \App\Models\Withdrawal::where('store_id', $store->id)->where('month', $currentMonthText)->where('status', 'pending')->sum('amount') ?? 0;
-        $monthlyDebts = \App\Models\Debt::where('store_id', $store->id)->where('month', $currentMonthText)->where('status', 'pending')->sum('amount') ?? 0;
-        $monthlyAbsences = \App\Models\Absence::where('store_id', $store->id)->where('month', $currentMonthText)->where('status', 'pending')->count();
+        $monthlyWithdrawals = Withdrawal::where('store_id', $store->id)->where('month', $currentMonthText)->where('status', 'pending')->sum('amount') ?? 0;
+        $monthlyDebts = Debt::where('store_id', $store->id)->where('month', $currentMonthText)->where('status', 'pending')->sum('amount') ?? 0;
+        $monthlyAbsences = Absence::where('store_id', $store->id)->where('month', $currentMonthText)->where('status', 'pending')->count();
 
-        $creditSales = \App\Models\CreditSale::where('store_id', $store->id)->where('status', 'pending')->sum('remaining_amount') ?? 0;
-        $monthlyCollections = \App\Models\CreditSale::where('store_id', $store->id)->where('status', 'deducted')->where('deducted_month', $currentMonthText)->sum('amount') ?? 0;
+        $creditSales = CreditSale::where('store_id', $store->id)->where('status', 'pending')->sum('remaining_amount') ?? 0;
+        $monthlyCollections = CreditSale::where('store_id', $store->id)->where('status', 'deducted')->where('deducted_month', $currentMonthText)->sum('amount') ?? 0;
 
         $activeEmployees = $store->employees()->where('status', 'active')->count();
         $suspendedEmployees = $store->employees()->where('status', 'suspended')->count();
         $topSalaries = $store->employees()->orderBy('salary', 'desc')->take(5)->get(['name', 'salary', 'status']);
 
         // الموظفون الأكثر مديونية وغياباً
-        $mostDebtEmployees = \App\Models\Debt::where('store_id', $store->id)->where('status', 'pending')->where('person_type', 'App\\Models\\Employee')->selectRaw('person_id, SUM(amount) as total_debt')->groupBy('person_id')->orderBy('total_debt', 'desc')->take(5)->get()->map(fn($item) => ['name' => \App\Models\Employee::find($item->person_id)->name ?? 'غير معروف', 'total_debt' => $item->total_debt]);
-        $mostAbsentEmployees = \App\Models\Absence::where('store_id', $store->id)->where('status', 'pending')->where('person_type', 'App\\Models\\Employee')->selectRaw('person_id, COUNT(*) as absence_count')->groupBy('person_id')->orderBy('absence_count', 'desc')->take(5)->get()->map(fn($item) => ['name' => \App\Models\Employee::find($item->person_id)->name ?? 'غير معروف', 'absence_count' => $item->absence_count]);
+        $mostDebtEmployees = $this->rankEmployeesByAggregate(
+            Debt::query()
+                ->where('store_id', $store->id)
+                ->where('status', 'pending')
+                ->where('person_type', Employee::class),
+            'SUM(amount)',
+            'total_debt'
+        );
+        $mostAbsentEmployees = $this->rankEmployeesByAggregate(
+            Absence::query()
+                ->where('store_id', $store->id)
+                ->where('status', 'pending')
+                ->where('person_type', Employee::class),
+            'COUNT(*)',
+            'absence_count'
+        );
 
-        // ===== 3. إحصائيات المبيعات والمصروفات (باستخدام paid_amount كأساس البيع) =====
-        $monthlySales = Sale::where('store_id', $store->id)
-            ->whereMonth('created_at', $now->month)
-            ->whereYear('created_at', $now->year)
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            })
-            ->sum('paid_amount');
-        $todaySales = Sale::where('store_id', $store->id)
-            ->whereDate('created_at', today())
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            })
-            ->sum('paid_amount');
+        // ===== 3. إحصائيات المبيعات والمصروفات (بتاريخ محاسبي موحد) =====
+        $monthlyFinancialMetrics = $financialSummaryService->storeMetricsForPeriod(
+            collect([$store->id]),
+            $monthStart,
+            $monthEnd,
+            ['cash', 'card', 'credit', 'mixed']
+        );
+        $todayFinancialMetrics = $financialSummaryService->storeMetricsForPeriod(
+            collect([$store->id]),
+            $today,
+            $today,
+            ['cash', 'card', 'credit', 'mixed']
+        );
 
-        $cashSales = Sale::where('store_id', $store->id)->where('sale_type', 'cash')->whereMonth('created_at', $now->month)->whereYear('created_at', $now->year)->sum('paid_amount');
-        $cardSales = Sale::where('store_id', $store->id)->where('sale_type', 'card')->whereMonth('created_at', $now->month)->whereYear('created_at', $now->year)->sum('paid_amount');
-        $creditSalesToday = Sale::where('store_id', $store->id)->where('sale_type', 'credit')->whereMonth('created_at', $now->month)->whereYear('created_at', $now->year)->sum('paid_amount');
+        $monthlyStoreMetrics = $monthlyFinancialMetrics['metrics_by_store'][$store->id] ?? [];
+        $todayStoreMetrics = $todayFinancialMetrics['metrics_by_store'][$store->id] ?? [];
+        $monthlySales = (float) ($monthlyStoreMetrics['sales'] ?? 0);
+        $todaySales = (float) ($todayStoreMetrics['sales'] ?? 0);
 
-        $monthlyExpenses = \App\Models\Expense::where('store_id', $store->id)->whereMonth('created_at', $now->month)->whereYear('created_at', $now->year)->sum('amount');
-        $todayExpenses = \App\Models\Expense::where('store_id', $store->id)->whereDate('created_at', today())->sum('amount');
+        $cashSales = $this->salesTotalByTypeForPeriod($store, 'cash', $monthStart, $monthEnd);
+        $cardSales = $this->salesTotalByTypeForPeriod($store, 'card', $monthStart, $monthEnd);
+        $creditSalesToday = $this->salesTotalByTypeForPeriod($store, 'credit', $monthStart, $monthEnd);
+
+        $monthlyExpenses = (float) ($monthlyStoreMetrics['expenses'] ?? 0);
+        $todayExpenses = (float) ($todayStoreMetrics['expenses'] ?? 0);
 
         // ===== 4. إحصائيات الربحية =====
-        $monthlyProfit = Sale::where('store_id', $store->id)
-            ->whereMonth('created_at', $now->month)
-            ->whereYear('created_at', $now->year)
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            })
-            ->selectRaw('COALESCE(SUM(paid_amount - ((products_total + labor_total) - profit)), 0) as monthly_profit')
-            ->value('monthly_profit');
+        $monthlyProfit = (float) ($monthlyStoreMetrics['profit'] ?? 0);
         $monthlyOperatingExpenses = $monthlyExpenses;
         $totalMonthlyCosts = $totalMonthlySalaries + $monthlyOperatingExpenses;
-        $monthlyNetProfit = $monthlyProfit - $totalMonthlyCosts;
+        $monthlyNetProfit = $monthlyProfit - $totalMonthlySalaries;
 
         $profitMargin = ($monthlySales > 0) ? ($monthlyNetProfit / $monthlySales) * 100 : 0;
         $dailyAverageProfit = ($now->day > 0) ? ($monthlyNetProfit / $now->day) : $monthlyNetProfit;
         $costToRevenueRatio = ($monthlySales > 0) ? ($totalMonthlyCosts / $monthlySales) * 100 : 0;
 
         // ===== 5. الموازنات والبيانات الأخرى =====
-        $lastBalance = \App\Models\DailyBalance::where('store_id', $store->id)->latest()->first();
-        $monthlyDifferences = \App\Models\DailyBalance::where('store_id', $store->id)->whereMonth('created_at', $now->month)->whereYear('created_at', $now->year)->sum('difference');
-        $monthlyShifts = \App\Models\DailyBalance::where('store_id', $store->id)->whereMonth('created_at', $now->month)->whereYear('created_at', $now->year)->count();
+        $lastBalance = DailyBalance::where('store_id', $store->id)->latest()->first();
+        $monthlyBalancesQuery = DailyBalance::where('store_id', $store->id);
+        $financialSummaryService->applyAccountingPeriodToTable($monthlyBalancesQuery, 'daily_balances', $monthStart, $monthEnd);
+        $monthlyDifferences = (clone $monthlyBalancesQuery)->sum('difference');
+        $monthlyShifts = (clone $monthlyBalancesQuery)->count();
 
         $averageProductPrice = $store->products()->avg('price') ?? 0;
         $productsWithoutImages = $store->products()->where(fn($q) => $q->whereNull('image')->orWhere('image', ''))->count();
         $lowStockPercentage = $productsCount > 0 ? round(($lowStockCount / $productsCount) * 100, 2) : 0;
-        $monthlyMovements = \App\Models\StockMovement::where('store_id', $store->id)->whereMonth('created_at', $now->month)->whereYear('created_at', $now->year)->count();
+        $monthlyMovementsQuery = StockMovement::where('store_id', $store->id);
+        $financialSummaryService->applyAccountingPeriodToTable($monthlyMovementsQuery, 'stock_movements', $monthStart, $monthEnd);
+        $monthlyMovements = $monthlyMovementsQuery->count();
         $mostActiveProducts = $store->products()->withCount('stockMovements')->orderBy('stock_movements_count', 'desc')->take(5)->get();
         $categoryStats = $store->categories()->withCount('products')->orderBy('products_count', 'desc')->take(5)->get();
-        $todayInvoices = \App\Models\Invoice::whereHas('sale', function ($q) use ($store) {
-            $q->where('store_id', $store->id)
-                ->where(function ($subQuery) {
-                    $subQuery->whereNull('description')
-                        ->orWhere('description', '!=', 'manual_invoice_entry');
-                });
-        })->whereDate('created_at', today())->count();
+        $todayInvoices = Invoice::whereHas('sale', function ($saleQuery) use ($store, $today) {
+            $saleQuery->where('store_id', $store->id)
+                ->collectedDashboardSales()
+                ->forAccountingDate($today->toDateString());
+        })->count();
         $averageInvoiceValue = $todayInvoices > 0 ? $todaySales / $todayInvoices : 0;
 
         return compact(
@@ -129,5 +154,34 @@ class StoreDetailsService
             'monthlyProfit', 'monthlyOperatingExpenses', 'monthlyNetProfit', 'profitMargin', 'dailyAverageProfit', 'totalMonthlyCosts', 'costToRevenueRatio',
             'monthlyExpenses', 'todayExpenses', 'lastBalance', 'monthlyDifferences', 'monthlyShifts', 'metersAvailable'
         );
+    }
+
+    private function salesTotalByTypeForPeriod(Store $store, string $saleType, CarbonInterface $periodStart, CarbonInterface $periodEnd): float
+    {
+        return (float) Sale::query()
+            ->where('store_id', $store->id)
+            ->where('sale_type', $saleType)
+            ->excludeManualInvoiceEntries()
+            ->betweenAccountingDates($periodStart, $periodEnd)
+            ->sum('paid_amount');
+    }
+
+    private function rankEmployeesByAggregate(Builder $baseQuery, string $aggregateExpression, string $resultKey): Collection
+    {
+        $rankedRows = $baseQuery
+            ->selectRaw("person_id, {$aggregateExpression} as aggregate_value")
+            ->groupBy('person_id')
+            ->orderByDesc('aggregate_value')
+            ->take(5)
+            ->get();
+
+        $employeeNamesById = Employee::query()
+            ->whereIn('id', $rankedRows->pluck('person_id')->filter())
+            ->pluck('name', 'id');
+
+        return $rankedRows->map(fn ($rankedRow) => [
+            'name' => $employeeNamesById[$rankedRow->person_id] ?? 'غير معروف',
+            $resultKey => $rankedRow->aggregate_value,
+        ]);
     }
 }
