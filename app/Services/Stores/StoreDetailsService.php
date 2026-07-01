@@ -58,9 +58,9 @@ class StoreDetailsService
         $totalAccountants = $store->accountants()->count();
         $totalMonthlySalaries = $store->employees()->sum('salary') ?? 0;
 
-        $monthlyWithdrawals = Withdrawal::where('store_id', $store->id)->where('month', $currentMonthText)->where('status', 'pending')->sum('amount') ?? 0;
-        $monthlyDebts = Debt::where('store_id', $store->id)->betweenOperationDates($monthStart, $monthEnd)->where('status', 'pending')->sum('amount') ?? 0;
-        $monthlyAbsences = Absence::where('store_id', $store->id)->betweenOperationDates($monthStart, $monthEnd)->where('status', 'pending')->count();
+        $monthlyWithdrawals = $this->monthlyPendingWithdrawals($store, $monthStart, $monthEnd);
+        $monthlyDebts = $this->monthlyPendingDebts($store, $monthStart, $monthEnd);
+        $monthlyAbsences = $this->monthlyPendingAbsences($store, $monthStart, $monthEnd);
 
         $creditSales = CreditSale::where('store_id', $store->id)->where('status', 'pending')->sum('remaining_amount') ?? 0;
         $monthlyCollections = CreditSale::where('store_id', $store->id)->where('status', 'deducted')->where('deducted_month', $currentMonthText)->sum('amount') ?? 0;
@@ -154,6 +154,37 @@ class StoreDetailsService
             'monthlyProfit', 'monthlyOperatingExpenses', 'monthlyNetProfit', 'profitMargin', 'dailyAverageProfit', 'totalMonthlyCosts', 'costToRevenueRatio',
             'monthlyExpenses', 'todayExpenses', 'lastBalance', 'monthlyDifferences', 'monthlyShifts', 'metersAvailable'
         );
+    }
+
+
+    private function monthlyPendingWithdrawals(Store $store, CarbonInterface $monthStart, CarbonInterface $monthEnd): float
+    {
+        // السحوبات مرتبطة بالشفت ماليًا، لذلك نستخدم التاريخ المحاسبي عند توفره.
+        return (float) Withdrawal::query()
+            ->where('store_id', $store->id)
+            ->where('status', 'pending')
+            ->betweenAccountingDates($monthStart, $monthEnd)
+            ->sum('amount');
+    }
+
+    private function monthlyPendingDebts(Store $store, CarbonInterface $monthStart, CarbonInterface $monthEnd): float
+    {
+        // المديونية لها تاريخ عملية مستقل؛ لا نعتمد على month وحده لأنه قد لا يطابق الشفت المرجعي.
+        return (float) Debt::query()
+            ->where('store_id', $store->id)
+            ->where('status', 'pending')
+            ->betweenOperationDates($monthStart, $monthEnd)
+            ->sum('amount');
+    }
+
+    private function monthlyPendingAbsences(Store $store, CarbonInterface $monthStart, CarbonInterface $monthEnd): int
+    {
+        // الغياب يحسب بعدد أيام العملية الفعلية داخل الشهر المحاسبي المعروض.
+        return (int) Absence::query()
+            ->where('store_id', $store->id)
+            ->where('status', 'pending')
+            ->betweenOperationDates($monthStart, $monthEnd)
+            ->count();
     }
 
     private function salesTotalByTypeForPeriod(Store $store, string $saleType, CarbonInterface $periodStart, CarbonInterface $periodEnd): float
