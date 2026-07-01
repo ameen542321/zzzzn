@@ -7,8 +7,6 @@ use App\Models\Debt;
 use App\Traits\FindPersonTrait;
 use App\Services\EmployeeLogService;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use App\Models\Employee;
 
 /**
@@ -144,80 +142,11 @@ class EmployeeReports
             ->setPaper('a4')
             ->setOption('encoding', 'UTF-8');
 
-        // بعد التصدير:
-        // - تصفير السحب والغياب
-        // - حذف العمليات المحصّلة فقط (المديونيات والآجل المحصّل)
-        // - الإبقاء على غير المحصّل كما هو
-        $resetCounts = [
-            'withdrawals' => 0,
-            'absences' => 0,
-            'debts' => 0,
-            'credit_collections' => 0,
-        ];
-
-        DB::transaction(function () use ($person, $reportMonthKey, $monthStart, $monthEnd, &$resetCounts) {
-            $resetCounts['withdrawals'] = $person->withdrawals()
-                ->where(function ($query) use ($monthStart, $monthEnd, $reportMonthKey) {
-                    // حذف سحوبات الشهر المستهدف + أي سحوبات قديمة ما زالت pending من أشهر سابقة
-                    $query->where(function ($targetMonth) use ($monthStart, $monthEnd, $reportMonthKey) {
-                        $targetMonth->whereBetween('date', [$monthStart, $monthEnd])
-                            ->orWhere('month', $reportMonthKey);
-                    })->orWhere(function ($oldPending) use ($monthStart, $reportMonthKey) {
-                        $oldPending->where('status', 'pending')
-                            ->where(function ($oldScope) use ($monthStart, $reportMonthKey) {
-                                $oldScope->whereDate('date', '<', $monthStart)
-                                    ->orWhere('month', '<', $reportMonthKey);
-                            });
-                    });
-                })
-                ->delete();
-
-            $resetCounts['absences'] = $person->absences()
-                ->where(function ($query) use ($monthStart, $monthEnd, $reportMonthKey) {
-                    $query->whereBetween('date', [$monthStart, $monthEnd])
-                        ->orWhere('month', $reportMonthKey);
-                })
-                ->delete();
-
-            $resetCounts['debts'] = $person->debts()
-                ->where(function ($query) use ($monthStart, $monthEnd, $reportMonthKey) {
-                    $query->whereBetween('date', [$monthStart, $monthEnd])
-                        ->orWhere('month', $reportMonthKey);
-                })
-                // لا نحذف إلا المديونية المحصّلة/المسددة
-                // ونُبقي المديونية غير المحصّلة كما هي.
-                ->where(function ($query) {
-                    $query->where('status', 'deducted')
-                        ->orWhere('amount', '<', 0);
-                })
-                ->delete();
-
-            // الآجل: تصفير المحصّل فقط
-            $resetCounts['credit_collections'] = $person->creditSales()
-                ->where(function ($query) use ($monthStart, $monthEnd, $reportMonthKey) {
-                    $query->where('deducted_month', $reportMonthKey)
-                        ->orWhereBetween('date', [$monthStart, $monthEnd]);
-                })
-                ->where('status', 'deducted')
-                ->delete();
-
-            $logsQuery = $person->logs();
-
-            if (Schema::hasColumn('employee_logs', 'logged_at')) {
-                $logsQuery->where(function ($query) use ($monthStart, $monthEnd) {
-                    $query->whereBetween('logged_at', [$monthStart, $monthEnd])
-                        ->orWhereBetween('created_at', [$monthStart, $monthEnd]);
-                });
-            } else {
-                $logsQuery->whereBetween('created_at', [$monthStart, $monthEnd]);
-            }
-
-            $logsQuery->delete();
-        });
-
+        // قرار مالي مثبت: تصدير PDF لا يحذف ولا يصفر أي عملية.
+        // التقرير أصبح لقطة قراءة فقط؛ التحصيل أو التسوية تتم من شاشات العمليات المخصصة.
         session()->flash(
             'success',
-            "تم تصدير التقرير وتصفير البيانات بنجاح (السحوبات: {$resetCounts['withdrawals']}، الغياب: {$resetCounts['absences']}، المديونيات: {$resetCounts['debts']}، الآجل المحصّل: {$resetCounts['credit_collections']})."
+            "تم تصدير التقرير بنجاح دون حذف أو تصفير أي بيانات للشهر {$reportMonthKey}."
         );
 
         return $pdf->download("تقرير {$reportMonthKey} - {$person->name}.pdf");
