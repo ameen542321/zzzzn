@@ -6,6 +6,7 @@ use App\Models\Employee;
 use App\Models\Accountant;
 use Illuminate\Http\Request;
 use App\Services\EmployeeLogService;
+use App\Services\Employees\EmployeeActionsViewService;
 
 /**
  * --------------------------------------------------------------------------
@@ -33,11 +34,7 @@ class EmployeeActions
 
         $returnTo = self::safeReturnTo(request()->query('return_to')) ?? route('user.employees.index');
 
-        return view('employees.actions', [
-            'employee'   => $employee,
-            'oldAccount' => $employee->accountant,
-            'returnTo'   => $returnTo,
-        ]);
+        return view('employees.actions', app(EmployeeActionsViewService::class)->viewData($employee, $returnTo, request()->query('month')));
     }
 
     /**

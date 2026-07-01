@@ -53,7 +53,7 @@ class EmployeeOperationService
             'withdrawal',
             "سحب مبلغ {$data['amount']} ريال",
             $data['amount'],
-            'operation'
+            $this->operationLogMeta($actor, 'operation')
         );
 
         LogHelper::add(
@@ -96,7 +96,7 @@ class EmployeeOperationService
             'absence',
             "تسجيل غياب بتاريخ {$operationDate->toDateString()}",
             null,
-            'operation'
+            $this->operationLogMeta($actor, 'operation')
         );
 
         LogHelper::add(
@@ -159,7 +159,7 @@ class EmployeeOperationService
             'debt',
             "تسجيل مديونية بقيمة {$data['amount']} ريال",
             $data['amount'],
-            'operation'
+            $this->operationLogMeta($actor, 'operation')
         );
 
         LogHelper::add(
@@ -216,7 +216,7 @@ class EmployeeOperationService
             'credit_sale',
             "تسجيل بيع آجل بقيمة {$data['amount']} ريال",
             $data['amount'],
-            'operation'
+            $this->operationLogMeta($actor, 'operation')
         );
 
         LogHelper::add(
@@ -285,7 +285,7 @@ class EmployeeOperationService
             $actionName,
             "{$description} بقيمة {$amount} ريال",
             $amount,
-            'operation'
+            $this->operationLogMeta($actor, 'operation')
         );
 
         LogHelper::add(
@@ -321,10 +321,13 @@ class EmployeeOperationService
         $payments[] = [
             'amount' => $amount,
             'date' => now()->toDateTimeString(),
+            'added_by' => $actor['id'] ?? null,
+            'added_by_name' => $actor['name'] ?? null,
+            'description' => $remainingAmount == 0 ? 'تحصيل كامل' : 'تحصيل جزئي',
         ];
 
         $creditSale->remaining_amount = $remainingAmount;
-        $creditSale->partial_payments = $remainingAmount == 0 ? [] : $payments;
+        $creditSale->partial_payments = $payments;
         $creditSale->status = $remainingAmount == 0 ? 'deducted' : 'pending';
         $creditSale->deducted_month = $remainingAmount == 0 ? now()->format('Y-m') : $creditSale->deducted_month;
         $creditSale->save();
@@ -336,7 +339,7 @@ class EmployeeOperationService
             $actionName,
             ($remainingAmount == 0 ? 'تحصيل كامل بيع آجل' : 'تحصيل جزئي من بيع آجل') . " بقيمة {$amount} ريال",
             $amount,
-            'operation'
+            $this->operationLogMeta($actor, 'operation')
         );
 
         LogHelper::add(
@@ -387,6 +390,16 @@ class EmployeeOperationService
             'template_key' => $templateKey,
             'channel' => 'CARLED',
         ]);
+    }
+
+    private function operationLogMeta(array $actor, string $type): array
+    {
+        return [
+            'type' => $type,
+            'actor_id' => $actor['id'] ?? null,
+            'actor_type' => $actor['type'] ?? null,
+            'actor_name' => $actor['name'] ?? 'النظام',
+        ];
     }
 
     private function operationDate(string $requestedDate, array $shiftContext, bool $useShiftGapDate): Carbon

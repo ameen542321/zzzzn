@@ -1,7 +1,6 @@
 <?php
 
 use App\Http\Controllers\AccountantController;
-use App\Http\Controllers\AdminReportController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\DailySalesController;
@@ -48,7 +47,6 @@ Route::middleware(['owner.unified'])->prefix('user')->name('user.')->group(funct
         ->name('dashboard.suspended-employees.traveler');
     Route::delete('/dashboard/suspended-employees/{employee}/terminate', [UserDashboardController::class, 'terminateSuspendedEmployee'])
         ->name('dashboard.suspended-employees.terminate');
-    Route::get('/send-all-reports', [AdminReportController::class, 'sendAllReports']);
     Route::post('/welcome/continue', function () {
         auth('web')->user()->update(['welcome_shown' => true]);
         return redirect()->route('user.dashboard');
@@ -272,7 +270,6 @@ Route::middleware(['owner.unified'])->prefix('user')->name('user.')->group(funct
         Route::post('/{employee}/promote', [EmployeeController::class, 'promote'])->name('promote');
         Route::post('/{employee}/demote', [EmployeeController::class, 'demote'])->name('demote');
         Route::get('/{employee}/actions', [EmployeeActionsController::class, 'index'])->name('actions');
-        Route::get('/{employee}/logs', [EmployeeActionsController::class, 'logs'])->name('logs');
         Route::get('/{employee}/export-log', [EmployeeController::class, 'exportSnappy'])->name('exportLog');
         Route::post('/{employee}/absence', [EmployeeActionsController::class, 'storeAbsence'])->name('absence.store');
         Route::post('/{employee}/debt', [EmployeeActionsController::class, 'storeDebt'])->name('debt.store');
@@ -280,8 +277,6 @@ Route::middleware(['owner.unified'])->prefix('user')->name('user.')->group(funct
         Route::post('/{employee}/credit-sale/{sale}/collect-full', [EmployeeActionsController::class, 'collectCreditSale'])->name('credit-sale.collect.full');
         Route::post('/{person}/credit-sale/{sale}/collect-partial/{amount}', [EmployeeActionsController::class, 'collectPartialCreditSale'])->name('credit-sale.collect.partial');
         Route::post('/{person}/withdrawal', [EmployeeActionsController::class, 'storeWithdrawal'])->name('withdrawal.store');
-        Route::get('/{person}/withdrawal', [EmployeeActionsController::class, 'showWithdrawalForm'])->name('withdrawal.form');
-        Route::get('/debts/{id}', [EmployeeActionsController::class, 'getDebts'])->name('debts.list');
         Route::post('/debt/collect/full/{debt}', [EmployeeActionsController::class, 'collectFull'])->name('debt.collect.full');
         Route::post('/debt/collect/partial/{debt}/{amount}', [EmployeeActionsController::class, 'collectPartial'])->name('debt.collect.partial');
     });

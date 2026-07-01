@@ -23,7 +23,7 @@ class EmployeeActionsController extends Controller
 
         $returnTo = $this->safeReturnTo(request()->query('return_to')) ?? route('user.employees.index');
 
-        return view('employees.actions', app(EmployeeActionsViewService::class)->viewData($person, $returnTo));
+        return view('employees.actions', app(EmployeeActionsViewService::class)->viewData($person, $returnTo, request()->query('month')));
     }
 
     /**
@@ -246,30 +246,6 @@ public function collectPartialCreditSale($employeeId, CreditSale $sale, $amount)
 
         return $person;
     }
-
-    /**
-     * صفحة السجل
-     */
-    public function logs($id)
-    {
-        $person = $this->findPerson($id);
-        $this->authorizePerson($person);
-
-        $logs = $person->logs()
-            ->orderBy('created_at', 'desc')
-            ->get();
-
-        $returnTo = $this->safeReturnTo(request()->query('return_to'))
-            ?? route('user.employees.show', ['employee' => $person->id]);
-
-        return view('employees.logs', [
-            'employee' => $person,
-            'logs'     => $logs,
-            'returnTo' => $returnTo,
-        ]);
-    }
-
-
 
     private function safeReturnTo(?string $returnTo): ?string
     {
