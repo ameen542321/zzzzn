@@ -69,40 +69,4 @@ class FinancialSummaryResultTest extends TestCase
         $this->assertSame(777.0, $summary->toMetricArray()['employee_credit_collections']);
     }
 
-    public function test_legacy_array_keeps_old_keys_while_exposing_dto_metrics(): void
-    {
-        $salesByStore = collect([7 => 250.0]);
-        $expensesByStore = collect([7 => 20.0]);
-        $ownerPurchasesByStore = collect([7 => 15.0]);
-        $internalUseByStore = collect([7 => 5.0]);
-        $productsCostByStore = [7 => 80.0];
-
-        $result = new FinancialSummaryResult(collect([
-            7 => new StoreFinancialSummary(
-                storeId: 7,
-                sales: 250.0,
-                productsCost: 80.0,
-                expenses: 20.0,
-                ownerPurchases: 15.0,
-                internalUse: 5.0,
-            ),
-        ]));
-
-        $legacy = $result->toLegacyArray(
-            $salesByStore,
-            $productsCostByStore,
-            $expensesByStore,
-            $ownerPurchasesByStore,
-            $internalUseByStore,
-        );
-
-        $this->assertSame($salesByStore, $legacy['sales_by_store']);
-        $this->assertSame($productsCostByStore, $legacy['products_cost_by_store']);
-        $this->assertSame($expensesByStore, $legacy['expenses_by_store']);
-        $this->assertSame($ownerPurchasesByStore, $legacy['owner_purchases_by_store']);
-        $this->assertSame($internalUseByStore, $legacy['internal_use_by_store']);
-        $this->assertSame(130.0, $legacy['metrics_by_store'][7]['profit']);
-        $this->assertSame(20.0, $legacy['metrics_by_store'][7]['purchases_and_internal_use']);
-        $this->assertSame($legacy['metrics_by_store'][7], $legacy['totals']);
-    }
 }

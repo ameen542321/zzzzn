@@ -2,6 +2,7 @@
 
 namespace App\Services\Stores;
 
+use App\Data\Finance\StoreFinancialSummary;
 use App\Models\Absence;
 use App\Models\DailyBalance;
 use App\Models\Debt;
@@ -82,36 +83,36 @@ class StoreDetailsService
         );
 
         // ===== 3. إحصائيات المبيعات والمصروفات (بتاريخ محاسبي موحد) =====
-        $monthlyFinancialMetrics = $financialSummaryService->storeMetricsForPeriod(
+        $monthlyFinancialSummary = $financialSummaryService->storeSummariesForPeriod(
             collect([$store->id]),
             $monthStart,
             $monthEnd,
             ['cash', 'card', 'credit', 'mixed']
         );
-        $todayFinancialMetrics = $financialSummaryService->storeMetricsForPeriod(
+        $todayFinancialSummary = $financialSummaryService->storeSummariesForPeriod(
             collect([$store->id]),
             $today,
             $today,
             ['cash', 'card', 'credit', 'mixed']
         );
 
-        $monthlyStoreMetrics = $monthlyFinancialMetrics['metrics_by_store'][$store->id] ?? [];
-        $todayStoreMetrics = $todayFinancialMetrics['metrics_by_store'][$store->id] ?? [];
-        $monthlySales = (float) ($monthlyStoreMetrics['sales'] ?? 0);
-        $todaySales = (float) ($todayStoreMetrics['sales'] ?? 0);
-        $monthlyDebts = (float) ($monthlyStoreMetrics['employee_debt_balance'] ?? 0);
-        $creditSales = (float) ($monthlyStoreMetrics['employee_credit_outstanding'] ?? 0);
-        $monthlyCollections = (float) ($monthlyStoreMetrics['employee_credit_collections'] ?? 0);
+        $monthlyStoreMetrics = $monthlyFinancialSummary->summariesByStore->get($store->id) ?? $this->emptyFinancialSummary($store->id);
+        $todayStoreMetrics = $todayFinancialSummary->summariesByStore->get($store->id) ?? $this->emptyFinancialSummary($store->id);
+        $monthlySales = $monthlyStoreMetrics->sales;
+        $todaySales = $todayStoreMetrics->sales;
+        $monthlyDebts = $monthlyStoreMetrics->employeeDebtBalance;
+        $creditSales = $monthlyStoreMetrics->employeeCreditOutstanding;
+        $monthlyCollections = $monthlyStoreMetrics->employeeCreditCollections;
 
         $cashSales = $this->salesTotalByTypeForPeriod($store, 'cash', $monthStart, $monthEnd);
         $cardSales = $this->salesTotalByTypeForPeriod($store, 'card', $monthStart, $monthEnd);
         $creditSalesToday = $this->salesTotalByTypeForPeriod($store, 'credit', $monthStart, $monthEnd);
 
-        $monthlyExpenses = (float) ($monthlyStoreMetrics['expenses'] ?? 0);
-        $todayExpenses = (float) ($todayStoreMetrics['expenses'] ?? 0);
+        $monthlyExpenses = $monthlyStoreMetrics->expenses;
+        $todayExpenses = $todayStoreMetrics->expenses;
 
         // ===== 4. إحصائيات الربحية =====
-        $monthlyProfit = (float) ($monthlyStoreMetrics['profit'] ?? 0);
+        $monthlyProfit = $monthlyStoreMetrics->profit();
         $monthlyOperatingExpenses = $monthlyExpenses;
         $totalMonthlyCosts = $totalMonthlySalaries + $monthlyOperatingExpenses;
         $monthlyNetProfit = $monthlyProfit - $totalMonthlySalaries;
@@ -162,6 +163,18 @@ class StoreDetailsService
             ->where('status', 'pending')
             ->betweenAccountingDates($monthStart, $monthEnd)
             ->sum('amount');
+    }
+
+    private function emptyFinancialSummary(int $storeId): StoreFinancialSummary
+    {
+        return new StoreFinancialSummary(
+            storeId: $storeId,
+            sales: 0.0,
+            productsCost: 0.0,
+            expenses: 0.0,
+            ownerPurchases: 0.0,
+            internalUse: 0.0,
+        );
     }
 
     private function monthlyPendingAbsences(Store $store, CarbonInterface $monthStart, CarbonInterface $monthEnd): int

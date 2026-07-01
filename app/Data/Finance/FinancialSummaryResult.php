@@ -7,7 +7,7 @@ use Illuminate\Support\Collection;
 /**
  * نتيجة مالية مجمعة لفترة محاسبية.
  *
- * تحتفظ بالـ DTOs كمصدر حديث، وتوفر toLegacyArray فقط للمسارات القديمة حتى يتم نقلها تدريجيًا.
+ * تحتفظ بالـ DTOs كمصدر حديث موحد بدل مفاتيح مصفوفات متفرقة بين التقارير والواجهات.
  */
 final readonly class FinancialSummaryResult
 {
@@ -33,20 +33,4 @@ final readonly class FinancialSummaryResult
         );
     }
 
-    public function toLegacyArray(Collection $salesByStore, array $productsCostByStore, Collection $expensesByStore, Collection $ownerPurchasesByStore, Collection $internalUseByStore): array
-    {
-        $metricsByStore = $this->summariesByStore
-            ->map(fn (StoreFinancialSummary $summary) => $summary->toMetricArray())
-            ->all();
-
-        return [
-            'sales_by_store' => $salesByStore,
-            'products_cost_by_store' => $productsCostByStore,
-            'expenses_by_store' => $expensesByStore,
-            'owner_purchases_by_store' => $ownerPurchasesByStore,
-            'internal_use_by_store' => $internalUseByStore,
-            'metrics_by_store' => $metricsByStore,
-            'totals' => $this->totals()->toMetricArray(),
-        ];
-    }
 }

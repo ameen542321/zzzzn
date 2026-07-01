@@ -15,31 +15,7 @@ use Illuminate\Support\Facades\Schema;
 class FinancialSummaryService
 {
     /**
-     * يبني ملخصًا ماليًا مجمعًا لكل متجر خلال فترة محاسبية واحدة.
-     *
-     * القيم هنا تستخدم business_date عند توفره، وتعود إلى created_at فقط كدعم للبيانات القديمة.
-     * هذه الدالة تبقى مؤقتًا للمسارات القديمة التي تتوقع مصفوفات.
-     */
-    public function storeMetricsForPeriod(Collection $storeIds, $periodStart, $periodEnd, array $includedSaleTypes): array
-    {
-        [$summaryResult, $rawAggregatesByStore] = $this->buildStoreSummariesForPeriod(
-            $storeIds,
-            $periodStart,
-            $periodEnd,
-            $includedSaleTypes
-        );
-
-        return $summaryResult->toLegacyArray(
-            $rawAggregatesByStore['sales'],
-            $rawAggregatesByStore['products_cost'],
-            $rawAggregatesByStore['expenses'],
-            $rawAggregatesByStore['owner_purchases'],
-            $rawAggregatesByStore['internal_use'],
-        );
-    }
-
-    /**
-     * النسخة الحديثة المعتمدة تدريجيًا: تعيد DTOs مالية بدل مفاتيح مصفوفات متفرقة.
+     * المصدر المالي الموحد: يعيد DTOs مالية بدل مفاتيح مصفوفات متفرقة.
      */
     public function storeSummariesForPeriod(Collection $storeIds, $periodStart, $periodEnd, array $includedSaleTypes): FinancialSummaryResult
     {
@@ -98,13 +74,6 @@ class FinancialSummaryService
 
         return [
             new FinancialSummaryResult($summariesByStore),
-            [
-                'sales' => $salesByStore,
-                'products_cost' => $productsCostByStore,
-                'expenses' => $expensesByStore,
-                'owner_purchases' => $ownerPurchasesByStore,
-                'internal_use' => $internalUseByStore,
-            ],
         ];
     }
 

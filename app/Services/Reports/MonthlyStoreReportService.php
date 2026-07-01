@@ -2,6 +2,7 @@
 
 namespace App\Services\Reports;
 
+use App\Data\Finance\StoreFinancialSummary;
 use App\Http\Controllers\Employees\EmployeeService;
 use App\Models\Employee;
 use App\Models\Purchase;
@@ -44,32 +45,24 @@ class MonthlyStoreReportService
             ->collectedDashboardSales()
             ->betweenAccountingDates($start, $end);
 
-        $financialMetrics = app(FinancialSummaryService::class)->storeMetricsForPeriod(
+        $storeFinancialMetrics = app(FinancialSummaryService::class)->storeSummariesForPeriod(
             collect([$store->id]),
             $start,
             $end,
             $includedSaleTypes
-        );
-        $storeFinancialMetrics = $financialMetrics['metrics_by_store'][$store->id] ?? [
-            'sales' => 0,
-            'products_cost' => 0,
-            'expenses' => 0,
-            'owner_purchases' => 0,
-            'internal_use' => 0,
-            'purchases_and_internal_use' => 0,
-        ];
+        )->summariesByStore->get($store->id) ?? $this->emptyFinancialSummary($store->id);
 
-        $internalUseSales = (float) $storeFinancialMetrics['internal_use'];
-        $ownerPurchases = (float) $storeFinancialMetrics['owner_purchases'];
-        $monthlySoldProductsCost = (float) $storeFinancialMetrics['products_cost'];
+        $internalUseSales = $storeFinancialMetrics->internalUse;
+        $ownerPurchases = $storeFinancialMetrics->ownerPurchases;
+        $monthlySoldProductsCost = $storeFinancialMetrics->productsCost;
         $profitDeductionTotal = $monthlySoldProductsCost;
-        $totalConsumption = (float) $storeFinancialMetrics['purchases_and_internal_use'];
-        $expensesTotal = (float) $storeFinancialMetrics['expenses'];
+        $totalConsumption = $storeFinancialMetrics->purchasesAndInternalUse();
+        $expensesTotal = $storeFinancialMetrics->expenses;
         $withdrawalsQuery = \App\Models\Withdrawal::where('store_id', $store->id);
         app(FinancialSummaryService::class)->applyAccountingPeriodToTable($withdrawalsQuery, 'employee_withdrawals', $start, $end);
         $withdrawalsTotal = (float) $withdrawalsQuery->sum('amount');
         $monthlySalaries = $this->monthlyProratedSalariesTotal($store->id, $start, $end);
-        $totalSales = (float) $storeFinancialMetrics['sales'];
+        $totalSales = $storeFinancialMetrics->sales;
 
         $data = [
             'store' => $store,
@@ -102,6 +95,18 @@ class MonthlyStoreReportService
         }
 
         return $data;
+    }
+
+    private function emptyFinancialSummary(int $storeId): StoreFinancialSummary
+    {
+        return new StoreFinancialSummary(
+            storeId: $storeId,
+            sales: 0.0,
+            productsCost: 0.0,
+            expenses: 0.0,
+            ownerPurchases: 0.0,
+            internalUse: 0.0,
+        );
     }
 
 

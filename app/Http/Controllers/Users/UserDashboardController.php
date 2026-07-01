@@ -216,19 +216,20 @@ class UserDashboardController extends Controller
             ->forAccountingDate(today()->toDateString());
 
         $salesToday = (float) (clone $salesQuery)->sum('paid_amount');
-        $dailyFinancialMetrics = app(FinancialSummaryService::class)->storeMetricsForPeriod(
+        $dailyFinancialSummary = app(FinancialSummaryService::class)->storeSummariesForPeriod(
             $storeIds,
             today()->startOfDay(),
             today()->endOfDay(),
             self::COLLECTED_SALE_TYPES
         );
-        $productsCostToday = (float) $dailyFinancialMetrics['totals']['products_cost'];
+        $dailyTotals = $dailyFinancialSummary->totals();
+        $productsCostToday = $dailyTotals->productsCost;
 
         return [
             'salesToday' => $salesToday,
             'dailySalesOperationsCount' => (int) (clone $salesQuery)->count(),
             'productsCostToday' => $productsCostToday,
-            'expensesToday' => (float) $dailyFinancialMetrics['totals']['expenses'],
+            'expensesToday' => $dailyTotals->expenses,
             'profitToday' => $salesToday - $productsCostToday,
         ];
     }
@@ -247,35 +248,35 @@ class UserDashboardController extends Controller
             function () use ($storeIds) {
                 $monthStart = now()->startOfMonth();
                 $monthEnd = now()->endOfMonth();
-                $monthlyFinancialMetrics = app(FinancialSummaryService::class)->storeMetricsForPeriod(
+                $monthlyFinancialSummary = app(FinancialSummaryService::class)->storeSummariesForPeriod(
                     $storeIds,
                     $monthStart,
                     $monthEnd,
                     self::COLLECTED_SALE_TYPES
                 );
 
-                $storeMetrics = collect($monthlyFinancialMetrics['metrics_by_store'])
-                    ->map(fn (array $storeMetrics) => [
-                        'sales_month' => $storeMetrics['sales'],
-                        'products_cost_month' => $storeMetrics['products_cost'],
-                        'expenses_month' => $storeMetrics['expenses'],
-                        'monthly_owner_purchases' => $storeMetrics['owner_purchases'],
-                        'monthly_accountant_consumption' => $storeMetrics['internal_use'],
-                        'monthly_purchases_consumption' => $storeMetrics['purchases_and_internal_use'],
-                        'profit_month' => $storeMetrics['profit'],
+                $storeMetrics = $monthlyFinancialSummary->summariesByStore
+                    ->map(fn ($storeMetrics) => [
+                        'sales_month' => $storeMetrics->sales,
+                        'products_cost_month' => $storeMetrics->productsCost,
+                        'expenses_month' => $storeMetrics->expenses,
+                        'monthly_owner_purchases' => $storeMetrics->ownerPurchases,
+                        'monthly_accountant_consumption' => $storeMetrics->internalUse,
+                        'monthly_purchases_consumption' => $storeMetrics->purchasesAndInternalUse(),
+                        'profit_month' => $storeMetrics->profit(),
                     ])
                     ->all();
 
-                $monthlyTotals = $monthlyFinancialMetrics['totals'];
+                $monthlyTotals = $monthlyFinancialSummary->totals();
 
                 return [
                     'totals' => [
-                        'salesMonth' => $monthlyTotals['sales'],
-                        'expensesMonth' => $monthlyTotals['expenses'],
-                        'profitMonth' => $monthlyTotals['profit'],
-                        'monthlyOwnerPurchases' => $monthlyTotals['owner_purchases'],
-                        'monthlyAccountantConsumption' => $monthlyTotals['internal_use'],
-                        'monthlyPurchasesAndConsumption' => $monthlyTotals['purchases_and_internal_use'],
+                        'salesMonth' => $monthlyTotals->sales,
+                        'expensesMonth' => $monthlyTotals->expenses,
+                        'profitMonth' => $monthlyTotals->profit(),
+                        'monthlyOwnerPurchases' => $monthlyTotals->ownerPurchases,
+                        'monthlyAccountantConsumption' => $monthlyTotals->internalUse,
+                        'monthlyPurchasesAndConsumption' => $monthlyTotals->purchasesAndInternalUse(),
                     ],
                     'store_metrics' => $storeMetrics,
                 ];
@@ -485,25 +486,21 @@ class UserDashboardController extends Controller
         $storeIds = $stores->pluck('id');
         $todayStart = today()->startOfDay();
         $todayEnd = today()->endOfDay();
-        $dailyFinancialMetrics = app(FinancialSummaryService::class)->storeMetricsForPeriod(
+        $dailyFinancialSummary = app(FinancialSummaryService::class)->storeSummariesForPeriod(
             $storeIds,
             $todayStart,
             $todayEnd,
             self::COLLECTED_SALE_TYPES
         );
-        $salesTodayByStore = $dailyFinancialMetrics['sales_by_store'];
-        $productsCostTodayByStore = $dailyFinancialMetrics['products_cost_by_store'];
-        $expensesTodayByStore = $dailyFinancialMetrics['expenses_by_store'];
         return $stores->map(function ($store) use (
-            $salesTodayByStore,
-            $productsCostTodayByStore,
-            $expensesTodayByStore,
+            $dailyFinancialSummary,
             $salariesByStore,
             $monthlyMetrics
         ) {
             $storeId = $store->id;
-            $salesToday = (float) ($salesTodayByStore[$storeId] ?? 0);
-            $productsCostToday = (float) ($productsCostTodayByStore[$storeId] ?? 0);
+            $dailyMetrics = $dailyFinancialSummary->summariesByStore->get($storeId);
+            $salesToday = (float) ($dailyMetrics?->sales ?? 0);
+            $productsCostToday = (float) ($dailyMetrics?->productsCost ?? 0);
             $month = $monthlyMetrics[$storeId] ?? [];
 
             return array_merge([
@@ -512,7 +509,7 @@ class UserDashboardController extends Controller
                 // المصروفات تعرض منفصلة ولا تخصم من ربح اليوم.
                 'profit_today' => $salesToday - $productsCostToday,
                 'sales_today' => $salesToday,
-                'expenses_today' => (float) ($expensesTodayByStore[$storeId] ?? 0),
+                'expenses_today' => (float) ($dailyMetrics?->expenses ?? 0),
                 'products_cost_today' => $productsCostToday,
                 'salaries_month' => (float) ($salariesByStore[$storeId] ?? 0),
             ], $month);
