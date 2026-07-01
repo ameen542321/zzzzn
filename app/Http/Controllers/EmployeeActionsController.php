@@ -2,14 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use App\Helpers\LogHelper;
 use App\Models\Debt;
 use App\Models\Employee;
 use App\Models\Accountant;
 use App\Models\CreditSale;
-use App\Models\Notification;
 use Illuminate\Http\Request;
-use App\Services\EmployeeLogService;
 use App\Services\Employees\EmployeeOperationException;
 use App\Services\Employees\EmployeeOperationService;
 
@@ -217,87 +214,6 @@ public function collectFull($debtId)
 }
 
 
-public function collectDebt(Request $request, $id)
-{
-    $person = $this->findPerson($id);
-    $this->authorizePerson($person);
-
-    $actorName = auth('accountant')->user()?->name ?? auth()->user()?->name ?? 'النظام';
-
-    $request->validate([
-        'amount'      => 'required|numeric|min:0.01',
-        'description' => 'nullable|string|max:255',
-        'date'        => 'required|date',
-        'mode'        => 'required|in:partial,full',
-    ]);
-
-    $month = date('Y-m', strtotime($request->date));
-    $currentBalance = $person->debts()->sum('amount');
-
-    if ($currentBalance <= 0) {
-        return back()->withErrors(['amount' => 'لا توجد مديونية حالية على هذا الموظف.']);
-    }
-
-    // ================================
-    // 🔥 منع التكرار خلال يوم كامل
-    // ================================
-    $exists = $person->debts()
-        ->whereDate('date', $request->date)
-        ->where('amount', -($request->mode === 'full' ? $currentBalance : min($request->amount, $currentBalance)))
-        ->where('description', $request->description ?: 'تحصيل مديونية')
-        ->exists();
-
-    if ($exists) {
-        return back()->withErrors([
-            'duplicate' => 'لا يمكن تكرار نفس عملية التحصيل بنفس الوصف والقيمة في نفس اليوم.'
-        ]);
-    }
-
-    // ================================
-    // حساب مبلغ التحصيل
-    // ================================
-    $collectAmount = $request->mode === 'full'
-        ? $currentBalance
-        : min($request->amount, $currentBalance);
-
-    $person->debts()->create([
-        'store_id'     => $person->store_id,
-        'amount'       => -$collectAmount,
-        'description'  => $request->description ?: 'تحصيل مديونية',
-        'date'         => $request->date,
-        'type'         => 'normal',
-        'status'       => 'pending',
-        'month'        => $month,
-        'added_by'     => auth()->id(),
-    ]);
-
-    EmployeeLogService::add(
-        $person,
-        'debt_collect',
-        "تحصيل مديونية بقيمة {$collectAmount} ريال"
-    );
-
-    LogHelper::add(
-        'debt_collect',
-        "قام {$actorName} بتحصيل مديونية بقيمة {$collectAmount} ريال للموظف {$person->name}",
-        $person->store_id
-    );
-
-    // 🔥 إشعار داخلي
-    $message = $request->mode === 'full'
-        ? "قام المحاسب بتحصيل كامل مديونية الموظف {$person->name} بقيمة {$collectAmount} ريال"
-        : "قام المحاسب بتحصيل مبلغ جزئي بقيمة {$collectAmount} ريال من مديونية الموظف {$person->name}";
-
-    $this->notifyStoreOwnerForInternalOps(
-        $person,
-        'تحصيل مديونية',
-        $message,
-        'debt_collect'
-    );
-
-    return back()->with('success', 'تم تحصيل المديونية بنجاح');
-}
-
 public function collectPartialCreditSale($employeeId, CreditSale $sale, $amount)
 {
     $person = $this->findPerson($employeeId);
@@ -377,26 +293,6 @@ public function collectPartialCreditSale($employeeId, CreditSale $sale, $amount)
     private function relationCount($person, string $relation): int
     {
         return method_exists($person, $relation) ? (int) $person->{$relation}()->count() : 0;
-    }
-
-    private function notifyStoreOwnerForInternalOps($person, string $title, string $message, ?string $templateKey = null): void
-    {
-        if (!auth('accountant')->check()) {
-            return;
-        }
-
-        $accountant = auth('accountant')->user();
-
-        Notification::create([
-            'sender_id'    => $accountant->id,
-            'sender_type'  => 'accountant',
-            'target_type'  => 'store',
-            'target_ids'   => [$person->store_id],
-            'title'        => $title,
-            'message'      => $message,
-            'template_key' => $templateKey,
-            'channel'      => 'CARLED',
-        ]);
     }
 
     private function safeReturnTo(?string $returnTo): ?string

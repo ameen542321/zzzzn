@@ -52,12 +52,6 @@ class StoreDashboardService
             ->betweenAccountingDates($now->copy()->startOfMonth(), $now->copy()->endOfMonth());
     }
 
-    private function monthlySales(Store $store, Carbon $now)
-    {
-        return $this->salesWithoutManualInvoiceEntries($store)
-            ->betweenAccountingDates($now->copy()->startOfMonth(), $now->copy()->endOfMonth());
-    }
-
     private function salesWithoutManualInvoiceEntries(Store $store)
     {
         return Sale::where('store_id', $store->id)
