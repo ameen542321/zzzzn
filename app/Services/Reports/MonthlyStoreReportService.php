@@ -271,14 +271,14 @@ class MonthlyStoreReportService
         $absences = \App\Models\Absence::where('store_id', $storeId)
             ->where('person_type', Employee::class)
             ->whereIn('person_id', $employeeIds)
-            ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
+            ->betweenOperationDates($start, $end)
             ->selectRaw('person_id, COUNT(*) as count_total')
             ->groupBy('person_id')
             ->pluck('count_total', 'person_id');
         $debts = \App\Models\Debt::where('store_id', $storeId)
             ->where('person_type', Employee::class)
             ->whereIn('person_id', $employeeIds)
-            ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
+            ->betweenOperationDates($start, $end)
             ->selectRaw('person_id, COALESCE(SUM(amount), 0) as total')
             ->groupBy('person_id')
             ->pluck('total', 'person_id');

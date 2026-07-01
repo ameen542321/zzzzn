@@ -49,6 +49,14 @@ class Absence extends Model
         return $query->whereDate('date', $date);
     }
 
+    public function scopeBetweenOperationDates($query, $startDate, $endDate)
+    {
+        return $query->whereBetween('date', [
+            Carbon\Carbon::parse($startDate)->toDateString(),
+            Carbon\Carbon::parse($endDate)->toDateString(),
+        ]);
+    }
+
     /*
     |--------------------------------------------------------------------------
     | العلاقات

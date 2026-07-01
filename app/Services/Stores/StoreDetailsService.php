@@ -59,8 +59,8 @@ class StoreDetailsService
         $totalMonthlySalaries = $store->employees()->sum('salary') ?? 0;
 
         $monthlyWithdrawals = Withdrawal::where('store_id', $store->id)->where('month', $currentMonthText)->where('status', 'pending')->sum('amount') ?? 0;
-        $monthlyDebts = Debt::where('store_id', $store->id)->where('month', $currentMonthText)->where('status', 'pending')->sum('amount') ?? 0;
-        $monthlyAbsences = Absence::where('store_id', $store->id)->where('month', $currentMonthText)->where('status', 'pending')->count();
+        $monthlyDebts = Debt::where('store_id', $store->id)->betweenOperationDates($monthStart, $monthEnd)->where('status', 'pending')->sum('amount') ?? 0;
+        $monthlyAbsences = Absence::where('store_id', $store->id)->betweenOperationDates($monthStart, $monthEnd)->where('status', 'pending')->count();
 
         $creditSales = CreditSale::where('store_id', $store->id)->where('status', 'pending')->sum('remaining_amount') ?? 0;
         $monthlyCollections = CreditSale::where('store_id', $store->id)->where('status', 'deducted')->where('deducted_month', $currentMonthText)->sum('amount') ?? 0;

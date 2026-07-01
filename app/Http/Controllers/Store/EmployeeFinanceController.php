@@ -188,7 +188,7 @@ class EmployeeFinanceController extends Controller
         ->exists();
 
     if ($exists) {
-        return back()->with('error', 'تم تسجيل البيع الآجل مسبقًا بنفس البيانات اليوم');
+        return back()->with('error', 'تم تسجيل البيع الآجل مسبقًا بنفس البيانات في تاريخ العملية');
     }
 
     $accountant = auth('accountant')->user();
@@ -382,7 +382,7 @@ public function storeCollection(Request $request, $saleId)
         ->exists();
 
     if ($exists) {
-        return back()->with('error', 'تم تسجيل المديونية مسبقًا بنفس البيانات اليوم');
+        return back()->with('error', 'تم تسجيل المديونية مسبقًا بنفس البيانات في تاريخ العملية');
     }
 
     $accountant = auth('accountant')->user();
@@ -471,7 +471,7 @@ public function collectPartial(Request $request, $debtId)
         ->exists();
 
     if ($exists) {
-        return back()->with('error', 'تم تسجيل هذا التحصيل مسبقًا اليوم.');
+        return back()->with('error', 'تم تسجيل هذا التحصيل مسبقًا في تاريخ العملية.');
     }
 
     // 1) إنشاء عملية التحصيل
@@ -549,7 +549,7 @@ public function collectFull($debtId)
         ->exists();
 
     if ($exists) {
-        return back()->with('error', 'تم تحصيل هذه العملية مسبقًا اليوم.');
+        return back()->with('error', 'تم تحصيل هذه العملية مسبقًا في تاريخ العملية.');
     }
 
     $collectedAmount = $debt->amount;

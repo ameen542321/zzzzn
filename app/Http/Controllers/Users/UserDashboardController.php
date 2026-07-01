@@ -316,7 +316,7 @@ class UserDashboardController extends Controller
             : Absence::whereIn('store_id', $storeIds)
                 ->where('person_type', Employee::class)
                 ->whereIn('person_id', $employeeIds)
-                ->whereBetween('date', [$periodStart->toDateString(), $periodEnd->toDateString()])
+                ->betweenOperationDates($periodStart, $periodEnd)
                 ->selectRaw('person_id, COUNT(*) as absence_days')
                 ->groupBy('person_id')
                 ->pluck('absence_days', 'person_id');
@@ -580,7 +580,7 @@ class UserDashboardController extends Controller
             ->whereIn('store_id', $storeIds)
             ->where('status', 'pending')
             ->where('remaining_amount', '>', 0)
-            ->whereBetween('date', [$chartStart->toDateString(), $chartEnd->toDateString()])
+            ->betweenOperationDates($chartStart, $chartEnd)
             ->groupBy('day')
             ->get()
             ->keyBy('day');
