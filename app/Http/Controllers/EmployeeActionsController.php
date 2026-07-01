@@ -7,6 +7,7 @@ use App\Models\Employee;
 use App\Models\Accountant;
 use App\Models\CreditSale;
 use Illuminate\Http\Request;
+use App\Services\Employees\EmployeeActionsViewService;
 use App\Services\Employees\EmployeeOperationException;
 use App\Services\Employees\EmployeeOperationService;
 
@@ -22,11 +23,7 @@ class EmployeeActionsController extends Controller
 
         $returnTo = $this->safeReturnTo(request()->query('return_to')) ?? route('user.employees.index');
 
-        return view('employees.actions', [
-            'employee' => $person,
-            'returnTo' => $returnTo,
-            'operationSummary' => $this->operationSummary($person),
-        ]);
+        return view('employees.actions', app(EmployeeActionsViewService::class)->viewData($person, $returnTo));
     }
 
     /**
@@ -273,27 +270,6 @@ public function collectPartialCreditSale($employeeId, CreditSale $sale, $amount)
     }
 
 
-
-    private function operationSummary($person): array
-    {
-        return [
-            'withdrawals_total' => $this->relationSum($person, 'withdrawals', 'amount'),
-            'debts_total' => $this->relationSum($person, 'debts', 'amount'),
-            'credit_remaining_total' => $this->relationSum($person, 'creditSales', 'remaining_amount'),
-            'absences_count' => $this->relationCount($person, 'absences'),
-            'logs_count' => $this->relationCount($person, 'logs'),
-        ];
-    }
-
-    private function relationSum($person, string $relation, string $column): float
-    {
-        return method_exists($person, $relation) ? (float) $person->{$relation}()->sum($column) : 0.0;
-    }
-
-    private function relationCount($person, string $relation): int
-    {
-        return method_exists($person, $relation) ? (int) $person->{$relation}()->count() : 0;
-    }
 
     private function safeReturnTo(?string $returnTo): ?string
     {

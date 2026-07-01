@@ -39,15 +39,6 @@
 
 </div>
 
-    @php
-        $operationSummaryCards = [
-            ['label' => 'إجمالي السحوبات', 'value' => number_format($operationSummary['withdrawals_total'] ?? 0, 2), 'suffix' => 'ريال', 'color' => 'text-sky-300'],
-            ['label' => 'إجمالي المديونيات', 'value' => number_format($operationSummary['debts_total'] ?? 0, 2), 'suffix' => 'ريال', 'color' => 'text-rose-300'],
-            ['label' => 'الآجل المتبقي', 'value' => number_format($operationSummary['credit_remaining_total'] ?? 0, 2), 'suffix' => 'ريال', 'color' => 'text-violet-300'],
-            ['label' => 'أيام الغياب', 'value' => (int) ($operationSummary['absences_count'] ?? 0), 'suffix' => 'يوم', 'color' => 'text-amber-300'],
-            ['label' => 'سجلات العمليات', 'value' => (int) ($operationSummary['logs_count'] ?? 0), 'suffix' => 'سجل', 'color' => 'text-emerald-300'],
-        ];
-    @endphp
 
     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 mb-8">
         @foreach($operationSummaryCards as $summaryCard)
@@ -83,16 +74,6 @@
                 </div>
             </a>
 
-            @php
-                $actionCards = [
-                    ['modal' => 'employeeDetailsModal', 'title' => 'بيانات المستخدم', 'hint' => 'مراجعة ملف الموظف', 'icon' => 'fa-id-card', 'accent' => 'blue'],
-                    ['modal' => 'withdrawalModal', 'title' => 'سحب', 'hint' => 'تسجيل عملية سحب', 'icon' => 'fa-money-bill-transfer', 'accent' => 'sky'],
-                    ['modal' => 'absenceModal', 'title' => 'غياب', 'hint' => 'إضافة يوم غياب', 'icon' => 'fa-user-xmark', 'accent' => 'amber'],
-                    ['modal' => 'debtModal', 'title' => 'مديونية', 'hint' => 'تسجيل مديونية', 'icon' => 'fa-hand-holding-dollar', 'accent' => 'rose'],
-                    ['modal' => 'creditSaleModal', 'title' => 'بيع آجل', 'hint' => 'إنشاء عملية بيع آجل', 'icon' => 'fa-cart-shopping', 'accent' => 'violet'],
-                    ['modal' => 'creditSaleCollectionModal', 'title' => 'تحصيل', 'hint' => 'تحصيل من المديونية', 'icon' => 'fa-sack-dollar', 'accent' => 'emerald'],
-                ];
-            @endphp
 
             @foreach($actionCards as $card)
                 <button type="button"
@@ -146,53 +127,11 @@
         </a>
     </div>
 
-    @php
-        $recentLogs = $employee->logs()->latest()->take(5)->get();
-
-        // Badge System
-        $map = [
-            'withdraw' => [
-                'label' => 'سحب نقدي',
-                'color' => 'text-blue-400',
-                'icon'  => 'fa-money-bill-transfer'
-            ],
-            'absence' => [
-                'label' => 'غياب',
-                'color' => 'text-yellow-400',
-                'icon'  => 'fa-user-xmark'
-            ],
-            'debt' => [
-                'label' => 'مديونية',
-                'color' => 'text-red-400',
-                'icon'  => 'fa-circle-exclamation'
-            ],
-            'collect' => [
-                'label' => 'تحصيل مديونية',
-                'color' => 'text-green-400',
-                'icon'  => 'fa-hand-holding-dollar'
-            ],
-            'sale_credit' => [
-                'label' => 'بيع آجل',
-                'color' => 'text-purple-400',
-                'icon'  => 'fa-file-invoice-dollar'
-            ],
-            'store_transfer' => [
-                'label' => 'نقل بين المتاجر',
-                'color' => 'text-indigo-400',
-                'icon'  => 'fa-right-left'
-            ],
-            'salary_update' => [
-                'label' => 'تعديل راتب',
-                'color' => 'text-gray-400',
-                'icon'  => 'fa-sack-dollar'
-            ],
-        ];
-    @endphp
 
     @forelse ($recentLogs as $log)
 
         @php
-            $action = $map[$log->action] ?? [
+            $action = $logActionMap[$log->action] ?? [
                 'label' => $log->action,
                 'color' => 'text-gray-400',
                 'icon'  => 'fa-circle-dot'
