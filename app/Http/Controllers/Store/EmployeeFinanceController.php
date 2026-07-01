@@ -356,83 +356,25 @@ public function collectPartial(Request $request, $debtId)
         'amount' => ['required', 'numeric', 'gt:0'],
     ]);
 
-    $amount = (float) $validated['amount'];
     $debt = Debt::findOrFail($debtId);
     $person = $debt->person;
     $this->authorizePerson($person);
     $accountant = auth('accountant')->user();
-    $operationContext = app(EmployeeOperationService::class)->resolveOperationContext($person->store_id, now()->toDateString(), true);
-    $operationDate = $operationContext['operation_date'];
 
-    // 🔥 منع المحاسب من تحصيل مديونيته الشخصية
     if ($person->id == $accountant->employee_id) {
         return back()->with('error', 'غير مصرح لك بتحصيل مديونيتك الشخصية.');
     }
 
-    // التحقق من صحة المبلغ
-    if ($amount > $debt->amount) {
-        return back()->with('error', 'مبلغ التحصيل غير صالح.');
+    try {
+        app(EmployeeOperationService::class)->collectDebt(
+            $debt,
+            (float) $validated['amount'],
+            app(EmployeeOperationService::class)->actorFromCurrentAuth(),
+            ['use_shift_gap_date' => true, 'notify_store_owner' => true]
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
     }
-
-    // 🔥 منع التكرار (عمليات اليوم فقط)
-    $exists = Debt::where('store_id', $person->store_id)
-        ->where('person_id', $person->id)
-        ->where('amount', -$amount)
-        ->where('description', 'تحصيل جزئي')
-        ->forOperationDate($operationDate->toDateString())
-        ->exists();
-
-    if ($exists) {
-        return back()->with('error', 'تم تسجيل هذا التحصيل مسبقًا في تاريخ العملية.');
-    }
-
-    // 1) إنشاء عملية التحصيل
-    $person->debts()->create([
-        'store_id'    => $person->store_id,
-        'person_id'   => $person->id,
-        'person_type' => Employee::class,
-        'amount'      => -$amount,
-        'description' => 'تحصيل جزئي',
-        'date'        => $operationDate->toDateString(),
-        'status'      => 'pending',
-        'month'       => $operationDate->format('Y-m'),
-        'added_by'    => $accountant->id,
-    ]);
-
-    // 2) تعديل المديونية الأصلية فقط.
-    // لا نجمع سجل التحصيل السالب مع المتبقي حتى لا يظهر الدين صفرًا عند التحصيل الجزئي.
-    $remainingAmount = $debt->amount - $amount;
-    $debt->update([
-        'amount' => $remainingAmount,
-        'status' => $remainingAmount <= 0 ? 'cleared' : 'pending',
-    ]);
-
-    // 3) تسجيل لوق
-    EmployeeLogService::add(
-        $person,
-        'debt_collect_partial',
-        "تحصيل جزئي بقيمة {$amount} ريال",
-        $amount,
-        'operation'
-    );
-
-    LogHelper::add(
-        'employee_debt_collect_partial',
-        "قام المحاسب {$accountant->name} بتحصيل جزئي بقيمة {$amount} ريال من مديونية الموظف {$person->name}",
-        $person->store_id
-    );
-
-    // 4) إرسال إشعار لصاحب المتجر
-    Notification::create([
-        'sender_id'    => $accountant->id,
-        'sender_type'  => 'accountant',
-        'target_type'  => 'user',
-        'target_ids'   => [$person->store->user->id],
-        'title'        => 'تحصيل جزئي للمديونية',
-        'message'      => "قام المحاسب {$accountant->name} بتحصيل مبلغ {$amount} ريال من مديونية الموظف {$person->name}",
-        'template_key' => 'debt_collect_partial',
-        'channel'      => 'CARLED',
-    ]);
 
     return back()->with('success', 'تم التحصيل الجزئي بنجاح');
 }
@@ -444,76 +386,25 @@ public function collectFull($debtId)
     $person = $debt->person;
     $this->authorizePerson($person);
     $accountant = auth('accountant')->user();
-    $operationContext = app(EmployeeOperationService::class)->resolveOperationContext($person->store_id, now()->toDateString(), true);
-    $operationDate = $operationContext['operation_date'];
 
-    // 🔥 منع المحاسب من تحصيل مديونيته الشخصية
     if ($person->id == $accountant->employee_id) {
         return back()->with('error', 'غير مصرح لك بتحصيل مديونيتك الشخصية.');
     }
 
-    // 🔥 منع التكرار (عمليات اليوم فقط)
-    $exists = Debt::where('store_id', $person->store_id)
-        ->where('person_id', $person->id)
-        ->where('amount', -$debt->amount)
-        ->where('description', 'تحصيل كامل')
-        ->forOperationDate($operationDate->toDateString())
-        ->exists();
-
-    if ($exists) {
-        return back()->with('error', 'تم تحصيل هذه العملية مسبقًا في تاريخ العملية.');
+    try {
+        app(EmployeeOperationService::class)->collectDebt(
+            $debt,
+            (float) $debt->amount,
+            app(EmployeeOperationService::class)->actorFromCurrentAuth(),
+            ['use_shift_gap_date' => true, 'notify_store_owner' => true, 'full' => true]
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
     }
-
-    $collectedAmount = $debt->amount;
-
-    // 1) إنشاء عملية التحصيل
-    $person->debts()->create([
-        'store_id'    => $person->store_id,
-        'person_id'   => $person->id,
-        'person_type' => Employee::class,
-        'amount'      => -$collectedAmount,
-        'description' => 'تحصيل كامل',
-        'date'        => $operationDate->toDateString(),
-        'status'      => 'pending',
-        'month'       => $operationDate->format('Y-m'),
-        'added_by'    => $accountant->id,
-    ]);
-
-    // 2) تصفير المديونية الأصلية مع إبقاء سجل التحصيل كسجل مستقل للتاريخ.
-    $debt->update([
-        'amount' => 0,
-        'status' => 'cleared',
-    ]);
-
-    // 3) تسجيل لوق
-    EmployeeLogService::add(
-        $person,
-        'debt_collect_full',
-        "تحصيل كامل بقيمة {$collectedAmount} ريال",
-        $collectedAmount,
-        'operation'
-    );
-
-    LogHelper::add(
-        'employee_debt_collect_full',
-        "قام المحاسب {$accountant->name} بتحصيل كامل مديونية الموظف {$person->name} بمبلغ {$collectedAmount} ريال",
-        $person->store_id
-    );
-
-    // 4) إرسال إشعار لصاحب المتجر
-    Notification::create([
-        'sender_id'    => $accountant->id,
-        'sender_type'  => 'accountant',
-        'target_type'  => 'user',
-        'target_ids'   => [$person->store->user->id],
-        'title'        => 'تحصيل كامل للمديونية',
-        'message'      => "قام المحاسب {$accountant->name} بتحصيل كامل مديونية الموظف {$person->name} بمبلغ {$collectedAmount} ريال",
-        'template_key' => 'debt_collect_full',
-        'channel'      => 'CARLED',
-    ]);
 
     return back()->with('success', 'تم التحصيل الكامل بنجاح');
 }
+
 
 
 

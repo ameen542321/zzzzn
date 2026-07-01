@@ -126,40 +126,16 @@ public function collectPartial($debtId, $amount)
 {
     $debt = Debt::findOrFail($debtId);
     $person = $this->authorizeDebtAccess($debt);
-    $actorName = auth('accountant')->user()?->name ?? auth()->user()?->name ?? 'النظام';
 
-
-    if ($amount <= 0 || $amount > $debt->amount) {
-        return back()->with('error', 'مبلغ التحصيل غير صالح.');
+    try {
+        app(EmployeeOperationService::class)->collectDebt(
+            $debt,
+            (float) $amount,
+            app(EmployeeOperationService::class)->actorFromCurrentAuth()
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
     }
-
-    $newAmount = $debt->amount - $amount;
-
-    $debt->update([
-        'amount' => $newAmount,
-        'status' => $newAmount == 0 ? 'cleared' : 'pending'
-    ]);
-
-    EmployeeLogService::add(
-        $person,
-        'debt_collect_partial',
-        "تحصيل جزئي بقيمة {$amount} ريال",
-        $debt->id,
-        'operation'
-    );
-
-    LogHelper::add(
-        'employee_debt_collect_partial',
-        "قام {$actorName} بتحصيل جزئي بقيمة {$amount} ريال من مديونية الموظف {$person->name}",
-        $person->store_id
-    );
-
-    $this->notifyStoreOwnerForInternalOps(
-        $person,
-        'تحصيل جزئي',
-        "قام {$actorName} بتحصيل جزئي بقيمة {$amount} ريال من مديونية {$person->name}. المتبقي {$newAmount} ريال.",
-        'debt_collect_partial'
-    );
 
     return back()->with('success', 'تم التحصيل الجزئي بنجاح');
 }
@@ -244,43 +220,26 @@ public function collectCreditSale($employeeId, CreditSale $sale)
 public function collectFull($debtId)
 {
     $debt = Debt::findOrFail($debtId);
-    $person = $this->authorizeDebtAccess($debt);
-    $actorName = auth('accountant')->user()?->name ?? auth()->user()?->name ?? 'النظام';
+    $this->authorizeDebtAccess($debt);
 
     if ($debt->amount <= 0) {
         return back()->with('error', 'لا توجد مديونية لتسديدها.');
     }
 
-    $amount = $debt->amount;
-
-    $debt->update([
-        'amount' => 0,
-
-    ]);
-
-    EmployeeLogService::add(
-        $person,
-        'debt_collect_full',
-        "تحصيل كامل بقيمة {$amount} ريال",
-        $debt->id,
-        'operation'
-    );
-
-    LogHelper::add(
-        'employee_debt_collect_full',
-        "قام {$actorName} بتحصيل كامل مديونية الموظف {$person->name} بقيمة {$amount} ريال",
-        $person->store_id
-    );
-
-    $this->notifyStoreOwnerForInternalOps(
-        $person,
-        'تحصيل كامل',
-        "قام {$actorName} بتحصيل كامل مديونية {$person->name} بقيمة {$amount} ريال.",
-        'debt_collect_full'
-    );
+    try {
+        app(EmployeeOperationService::class)->collectDebt(
+            $debt,
+            (float) $debt->amount,
+            app(EmployeeOperationService::class)->actorFromCurrentAuth(),
+            ['full' => true]
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
+    }
 
     return back()->with('success', 'تم التحصيل الكامل بنجاح');
 }
+
 
 public function collectDebt(Request $request, $id)
 {

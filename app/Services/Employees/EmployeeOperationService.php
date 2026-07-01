@@ -228,6 +228,126 @@ class EmployeeOperationService
         return $creditSale;
     }
 
+
+    public function collectDebt(Debt $debt, float $amount, array $actor, array $options = []): Debt
+    {
+        $person = $debt->person;
+        if (! $person) {
+            throw EmployeeOperationException::duplicate('لم يتم العثور على صاحب المديونية.');
+        }
+
+        if ($amount <= 0 || $amount > (float) $debt->amount) {
+            throw EmployeeOperationException::duplicate('مبلغ التحصيل غير صالح.');
+        }
+
+        $operationContext = $this->resolveOperationContext(
+            $person->store_id,
+            $options['date'] ?? now()->toDateString(),
+            (bool) ($options['use_shift_gap_date'] ?? false)
+        );
+        $operationDate = $operationContext['operation_date'];
+        $description = (bool) ($options['full'] ?? false) ? 'تحصيل كامل' : 'تحصيل جزئي';
+
+        $exists = Debt::where('store_id', $person->store_id)
+            ->where('person_id', $person->id)
+            ->where('person_type', get_class($person))
+            ->where('amount', -$amount)
+            ->where('description', $description)
+            ->forOperationDate($operationDate->toDateString())
+            ->exists();
+
+        if ($exists) {
+            throw EmployeeOperationException::duplicate('تم تسجيل هذا التحصيل مسبقًا في تاريخ العملية.');
+        }
+
+        $collectionDebt = $person->debts()->create([
+            'store_id' => $person->store_id,
+            'person_id' => $person->id,
+            'person_type' => get_class($person),
+            'amount' => -$amount,
+            'description' => $description,
+            'date' => $operationDate->toDateString(),
+            'type' => 'normal',
+            'status' => 'pending',
+            'month' => $operationDate->format('Y-m'),
+            'added_by' => $actor['id'] ?? null,
+        ]);
+
+        $remainingAmount = max(0, (float) $debt->amount - $amount);
+        $debt->update([
+            'amount' => $remainingAmount,
+            'status' => $remainingAmount <= 0 ? 'cleared' : 'pending',
+        ]);
+
+        $actionName = (bool) ($options['full'] ?? false) ? 'debt_collect_full' : 'debt_collect_partial';
+        EmployeeLogService::add(
+            $person,
+            $actionName,
+            "{$description} بقيمة {$amount} ريال",
+            $amount,
+            'operation'
+        );
+
+        LogHelper::add(
+            'employee_' . $actionName,
+            "قام {$actor['name']} بـ{$description} بقيمة {$amount} ريال من مديونية الموظف {$person->name}",
+            $person->store_id
+        );
+
+        if ((bool) ($options['notify_store_owner'] ?? false)) {
+            $this->notifyStoreOwner($person, $actor, $description . ' للمديونية', "قام {$actor['name']} بـ{$description} بقيمة {$amount} ريال من مديونية الموظف {$person->name}", $actionName);
+        }
+
+        return $collectionDebt;
+    }
+
+    public function collectCreditSale(CreditSale $creditSale, float $amount, array $actor, array $options = []): CreditSale
+    {
+        $person = $creditSale->person;
+        if (! $person) {
+            throw EmployeeOperationException::duplicate('لم يتم العثور على صاحب البيع الآجل.');
+        }
+
+        if ($creditSale->status === 'deducted') {
+            throw EmployeeOperationException::duplicate('تم تحصيل البيع الآجل مسبقًا.');
+        }
+
+        if ($amount <= 0 || $amount > (float) $creditSale->remaining_amount) {
+            throw EmployeeOperationException::duplicate('مبلغ التحصيل غير صالح.');
+        }
+
+        $remainingAmount = max(0, (float) $creditSale->remaining_amount - $amount);
+        $payments = $creditSale->partial_payments ?? [];
+        $payments[] = [
+            'amount' => $amount,
+            'date' => now()->toDateTimeString(),
+        ];
+
+        $creditSale->remaining_amount = $remainingAmount;
+        $creditSale->partial_payments = $remainingAmount == 0 ? [] : $payments;
+        $creditSale->status = $remainingAmount == 0 ? 'deducted' : 'pending';
+        $creditSale->deducted_month = $remainingAmount == 0 ? now()->format('Y-m') : $creditSale->deducted_month;
+        $creditSale->save();
+        $creditSale->syncLinkedSaleCollectionState();
+
+        $actionName = $remainingAmount == 0 ? 'credit_sale_deducted' : 'credit_sale_partial';
+        EmployeeLogService::add(
+            $person,
+            $actionName,
+            ($remainingAmount == 0 ? 'تحصيل كامل بيع آجل' : 'تحصيل جزئي من بيع آجل') . " بقيمة {$amount} ريال",
+            $amount,
+            'operation'
+        );
+
+        LogHelper::add(
+            $actionName,
+            "قام {$actor['name']} بتحصيل {$amount} ريال من بيع آجل للموظف {$person->name}",
+            $person->store_id
+        );
+
+        return $creditSale;
+    }
+
     public function resolveOperationContext(int $storeId, string $requestedDate, bool $useShiftGapDate = false): array
     {
         $shiftContext = app(ShiftLifecycleService::class)->currentShiftContext($storeId, now());
