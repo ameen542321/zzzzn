@@ -43,6 +43,16 @@ public function person()
         'created_at',       // لضبط تاريخ إنشاء العملية حسب التاريخ المدخل
     ];
 
+
+    protected $casts = [
+        'date' => 'date',
+    ];
+
+    public function scopeForOperationDate($query, $date)
+    {
+        return $query->whereDate('date', $date);
+    }
+
     /*
     |--------------------------------------------------------------------------
     | العلاقات

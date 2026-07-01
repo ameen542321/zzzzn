@@ -47,7 +47,13 @@ public function person() { return $this->morphTo(); }
     */
 protected $casts = [
     'partial_payments' => 'array',
+    'date' => 'date',
 ];
+
+public function scopeForOperationDate($query, $date)
+{
+    return $query->whereDate('date', $date);
+}
 
     /**
      * علاقة العملية مع الموظف

@@ -181,7 +181,7 @@ class EmployeeFinanceController extends Controller
         ->where('person_id', $person->id)
         ->where('amount', $request->amount)
         ->where('description', $description)
-        ->whereDate('created_at', today())
+        ->forOperationDate($request->date)
         ->exists();
 
     if ($exists) {
@@ -372,7 +372,7 @@ public function storeCollection(Request $request, $saleId)
         ->where('person_id', $person->id)
         ->where('amount', $request->amount)
         ->where('description', $description)
-        ->whereDate('created_at', today())
+        ->forOperationDate($request->date)
         ->exists();
 
     if ($exists) {
@@ -459,7 +459,7 @@ public function collectPartial(Request $request, $debtId)
         ->where('person_id', $person->id)
         ->where('amount', -$amount)
         ->where('description', 'تحصيل جزئي')
-        ->whereDate('created_at', today())
+        ->forOperationDate(today()->toDateString())
         ->exists();
 
     if ($exists) {
@@ -535,7 +535,7 @@ public function collectFull($debtId)
         ->where('person_id', $person->id)
         ->where('amount', -$debt->amount)
         ->where('description', 'تحصيل كامل')
-        ->whereDate('created_at', today())
+        ->forOperationDate(today()->toDateString())
         ->exists();
 
     if ($exists) {
@@ -630,7 +630,7 @@ public function withdrawalPage()
     $people = Employee::where('store_id', $storeId)->get();
 
     $lastWithdrawals = Withdrawal::where('store_id', $storeId)
-        ->whereDate('created_at', today())   // 👈 عمليات اليوم فقط
+        ->forAccountingDate(today()->toDateString())
         ->latest()
         ->get();
 
@@ -649,7 +649,7 @@ public function withdrawalPage()
         });
 
     $lastAbsences = Absence::where('store_id', $storeId)
-        ->whereDate('created_at', today())   // 👈 عمليات اليوم فقط
+        ->forOperationDate(today()->toDateString())
         ->orderBy('created_at', 'desc')
         ->get();
 
@@ -675,7 +675,7 @@ public function withdrawalPage()
         ->get();
 
     $lastDebts = Debt::where('store_id', $storeId)
-        ->whereDate('created_at', today())   // 👈 عمليات اليوم فقط
+        ->forOperationDate(today()->toDateString())
         ->with(['person', 'addedBy'])
         ->orderBy('created_at', 'desc')
         ->get();
@@ -690,7 +690,7 @@ public function withdrawalPage()
     $people = Employee::where('store_id', $storeId)->get();
 
     $lastCreditSales = CreditSale::where('store_id', $storeId)
-        ->whereDate('created_at', today())   // 👈 عمليات اليوم فقط
+        ->forOperationDate(today()->toDateString())
         ->orderBy('created_at', 'desc')
         ->get();
 

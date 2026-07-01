@@ -278,7 +278,7 @@ class MonthlyStoreReportService
         $debts = \App\Models\Debt::where('store_id', $storeId)
             ->where('person_type', Employee::class)
             ->whereIn('person_id', $employeeIds)
-            ->whereBetween('created_at', [$start, $end])
+            ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
             ->selectRaw('person_id, COALESCE(SUM(amount), 0) as total')
             ->groupBy('person_id')
             ->pluck('total', 'person_id');
