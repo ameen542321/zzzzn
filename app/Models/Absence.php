@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Traits\BelongsToStore;
@@ -52,8 +53,8 @@ class Absence extends Model
     public function scopeBetweenOperationDates($query, $startDate, $endDate)
     {
         return $query->whereBetween('date', [
-            Carbon\Carbon::parse($startDate)->toDateString(),
-            Carbon\Carbon::parse($endDate)->toDateString(),
+            Carbon::parse($startDate)->toDateString(),
+            Carbon::parse($endDate)->toDateString(),
         ]);
     }
 
