@@ -1,18 +1,15 @@
 <?php
 
 namespace App\Http\Controllers\Store;
-use App\Helpers\LogHelper;
 use App\Models\Debt;
 use App\Models\Absence;
 use App\Models\Employee;
 use App\Models\CreditSale;
 use App\Models\Withdrawal;
 use App\Models\EmployeeLog;
-use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use App\Http\Controllers\Controller;
-use App\Services\EmployeeLogService;
 use App\Services\Employees\EmployeeOperationException;
 use App\Services\Employees\EmployeeOperationService;
 
@@ -206,110 +203,30 @@ public function storeCollection(Request $request, $saleId)
 
     $person = $sale->person;
 
-    // منع المحاسب من تحصيل مديونيته الشخصية
     if ($person->id == $accountant->employee_id) {
         return back()->with('error', 'غير مصرح لك بتحصيل البيع الآجل الخاص بك.');
     }
 
-    // منع التحصيل إذا كان السداد مكتمل مسبقًا
-    if ($sale->status === 'deducted') {
-        return response('', 403);
-    }
+    $amount = $request->has('amount') ? (float) $request->amount : (float) $sale->remaining_amount;
 
-    /*
-    |--------------------------------------------------------------------------
-    | تحصيل كامل
-    |--------------------------------------------------------------------------
-    */
-    if (!$request->has('amount')) {
-
-        $sale->update([
-            'remaining_amount' => 0,
-            'partial_payments' => [],
-            'status'           => 'deducted',
-            'deducted_month'   => now()->format('Y-m'),
-        ]);
-
-        $sale->syncLinkedSaleCollectionState();
-
-        EmployeeLog::create([
-            'person_id'   => $sale->person_id,
-            'person_type' => $sale->person_type,
-            'store_id'    => $sale->store_id,
-            'action_name' => 'credit_sale_deducted',
-            'amount'      => $sale->amount,
-            'description' => 'تحصيل بيع آجل بقيمة كاملة ' . number_format($sale->amount, 2) . ' ريال',
-        ]);
-
-        // 🔥 تسجيل لوق لصاحب المتجر
-        LogHelper::add(
-            'credit_sale_deducted',
-            "قام المحاسب {$accountant->name} بتحصيل بيع آجل بقيمة كاملة {$sale->amount} ريال من الموظف {$person->name}",
-            $sale->store_id
+    try {
+        app(EmployeeOperationService::class)->collectCreditSale(
+            $sale,
+            $amount,
+            app(EmployeeOperationService::class)->actorFromCurrentAuth(),
+            ['full' => ! $request->has('amount')]
         );
-
-        $sale->delete();
-
-        return back()->with('success', 'تم تحصيل البيع الآجل بنجاح');
+    } catch (EmployeeOperationException $exception) {
+        return $request->has('amount')
+            ? response($exception->getMessage(), 422)
+            : back()->with('error', $exception->getMessage());
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | تحصيل جزئي
-    |--------------------------------------------------------------------------
-    */
-    if (!is_numeric($request->amount)) {
-        return response('', 422);
-    }
-
-    $amount = floatval($request->amount);
-
-    if ($amount < 1 || $amount > $sale->remaining_amount) {
-        return response('', 422);
-    }
-
-    $sale->remaining_amount -= $amount;
-
-    $payments = $sale->partial_payments ?? [];
-    $payments[] = [
-        'amount' => $amount,
-        'date'   => now()->toDateTimeString(),
-    ];
-
-    $sale->partial_payments = $payments;
-
-    if ($sale->remaining_amount == 0) {
-        $sale->status = 'deducted';
-        $sale->deducted_month = now()->format('Y-m');
-    } else {
-        $sale->status = 'pending';
-    }
-
-    $sale->save();
-    $sale->syncLinkedSaleCollectionState();
-
-    EmployeeLog::create([
-        'person_id'   => $sale->person_id,
-        'person_type' => $sale->person_type,
-        'store_id'    => $sale->store_id,
-        'action_name' => 'credit_sale_partial',
-        'amount'      => $amount,
-        'description' => 'تحصيل بيع آجل بقيمة جزئية ' . number_format($amount, 2) . ' ريال',
-    ]);
-
-    // 🔥 تسجيل لوق لصاحب المتجر
-    LogHelper::add(
-        'credit_sale_partial',
-        "قام المحاسب {$accountant->name} بتحصيل مبلغ {$amount} ريال من بيع آجل للموظف {$person->name}",
-        $sale->store_id
-    );
-
-    if ($sale->remaining_amount == 0) {
-        $sale->delete();
-    }
-
-    return response()->noContent();
+    return $request->has('amount')
+        ? response()->noContent()
+        : back()->with('success', 'تم تحصيل البيع الآجل بنجاح');
 }
+
 
 
 

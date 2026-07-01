@@ -173,48 +173,24 @@ public function collectCreditSale($employeeId, CreditSale $sale)
     $person = $this->findPerson($employeeId);
     $this->authorizePerson($person);
 
-    $actorName = auth('accountant')->user()?->name ?? auth()->user()?->name ?? 'النظام';
-
     if ($sale->person_id !== $person->id || $sale->person_type !== get_class($person)) {
         abort(403, 'غير مسموح');
     }
 
-    $sale->remaining_amount = 0;
-    $sale->status = 'deducted';
-    $sale->deducted_month = date('Y-m');
-    $sale->partial_payments = [];
-
-    $sale->save();
-    $sale->syncLinkedSaleCollectionState();
-
-    EmployeeLogService::add(
-        $person,
-        'credit_sale_deducted',
-        "تحصيل بيع آجل بقيمة {$sale->amount} ريال",
-        $sale->amount,
-        'operation'
-    );
-
-    LogHelper::add(
-        'credit_sale_deducted',
-        "قام {$actorName} بتحصيل كامل بيع آجل بقيمة {$sale->amount} ريال من الموظف {$person->name}",
-        $person->store_id
-    );
-
-   Notification::create([
-    'sender_id'    => auth()->id(),
-    'sender_type'  => 'system',
-    'target_type'  => 'store',
-    'target_ids'   => [$person->store_id],
-    'title'        => 'تحصيل كامل',
-    'message'      => "تم تحصيل مبلغ {$sale->amount} ريال بالكامل.",
-    'template_key' => 'due_collected',
-    'channel'      => 'CARLED',
-]);
-
+    try {
+        app(EmployeeOperationService::class)->collectCreditSale(
+            $sale,
+            (float) $sale->remaining_amount,
+            app(EmployeeOperationService::class)->actorFromCurrentAuth(),
+            ['full' => true]
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
+    }
 
     return back()->with('success', 'تم التحصيل الكامل بنجاح');
 }
+
 
 
 public function collectFull($debtId)
@@ -327,64 +303,19 @@ public function collectPartialCreditSale($employeeId, CreditSale $sale, $amount)
     $person = $this->findPerson($employeeId);
     $this->authorizePerson($person);
 
-    $actorName = auth('accountant')->user()?->name ?? auth()->user()?->name ?? 'النظام';
-
     if ($sale->person_id !== $person->id || $sale->person_type !== get_class($person)) {
         abort(403, 'غير مسموح');
     }
 
-    if ($amount <= 0 || $amount > $sale->remaining_amount) {
-        return back()->with('error', 'مبلغ التحصيل غير صالح.');
+    try {
+        app(EmployeeOperationService::class)->collectCreditSale(
+            $sale,
+            (float) $amount,
+            app(EmployeeOperationService::class)->actorFromCurrentAuth()
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
     }
-
-    // خصم من المتبقي
-    $sale->remaining_amount -= $amount;
-
-    // إضافة سجل JSON
-    $payments = $sale->partial_payments ?? [];
-
-    $payments[] = [
-        'amount' => $amount,
-        'date'   => now()->toDateString(),
-    ];
-
-    $sale->partial_payments = $payments;
-
-    // إذا انتهى السداد → إغلاق العملية
-    if ($sale->remaining_amount == 0) {
-        $sale->status = 'deducted';
-        $sale->deducted_month = date('Y-m');
-    }
-
-    $sale->save();
-    $sale->syncLinkedSaleCollectionState();
-
-    // لوج
-    EmployeeLogService::add(
-        $person,
-        'credit_sale_partial',
-        "تحصيل جزئي من بيع آجل بقيمة {$amount} ريال",
-        $amount,
-        'operation'
-    );
-
-    LogHelper::add(
-        'credit_sale_partial',
-        "قام {$actorName} بتحصيل جزئي بقيمة {$amount} ريال من بيع آجل للموظف {$person->name}",
-        $person->store_id
-    );
-
-    // إشعار
-    Notification::create([
-        'sender_id'    => auth()->id(),
-        'sender_type'  => 'system',
-        'target_type'  => 'store',
-        'target_ids'   => [$person->store_id],
-        'title'        => 'تحصيل جزئي',
-        'message'      => "تم تحصيل مبلغ {$amount} ريال. المتبقي الآن {$sale->remaining_amount} ريال.",
-        'template_key' => 'due_collected_partial',
-        'channel'      => 'CARLED',
-    ]);
 
     return back()->with('success', 'تم التحصيل الجزئي بنجاح');
 }
