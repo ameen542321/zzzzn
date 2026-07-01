@@ -3,13 +3,12 @@
 namespace App\Services\Reports;
 
 use App\Data\Finance\StoreFinancialSummary;
-use App\Http\Controllers\Employees\EmployeeService;
-use App\Models\Employee;
 use App\Models\Purchase;
 use App\Models\Sale;
 use App\Models\Store;
 use App\Models\StoreTransfer;
 use App\Services\Accounting\FinancialSummaryService;
+use App\Services\Employees\EmployeePayrollService;
 
 class MonthlyStoreReportService
 {
@@ -61,7 +60,7 @@ class MonthlyStoreReportService
         $withdrawalsQuery = \App\Models\Withdrawal::where('store_id', $store->id);
         app(FinancialSummaryService::class)->applyAccountingPeriodToTable($withdrawalsQuery, 'employee_withdrawals', $start, $end);
         $withdrawalsTotal = (float) $withdrawalsQuery->sum('amount');
-        $monthlySalaries = $this->monthlyProratedSalariesTotal($store->id, $start, $end);
+        $monthlySalaries = app(EmployeePayrollService::class)->proratedSalariesTotalForStore($store->id, $start, $end);
         $totalSales = $storeFinancialMetrics->sales;
 
         $data = [
@@ -90,7 +89,7 @@ class MonthlyStoreReportService
             $data['ownerPurchaseRows'] = $this->monthlyOwnerPurchaseRows($store->id, $start, $end);
             $data['accountantConsumptionRows'] = $this->monthlyAccountantConsumptionRows($store->id, $start, $end);
             $data['expenseRows'] = $this->monthlyExpenseRows($store->id, $start, $end);
-            $data['employeeRows'] = $this->monthlyEmployeeRows($store->id, $month, $start, $end);
+            $data['employeeRows'] = app(EmployeePayrollService::class)->monthlyRowsForStore($store->id, $month, $start, $end);
             $data['transferRows'] = $this->monthlyTransferRows($store->id, $start, $end);
         }
 
@@ -240,140 +239,6 @@ class MonthlyStoreReportService
             ->betweenAccountingDates($start, $end)
             ->orderBy('created_at')
             ->get(['id', 'description', 'amount', 'created_at']);
-    }
-
-    private function monthlyEmployeeRows(int $storeId, string $month, $start, $end)
-    {
-        // يشمل التقرير الموظفين الحاليين، والمنقولين بعد الفترة، وأي موظف لديه عملية مخزنة على هذا المتجر داخل الفترة.
-        $historicalEmployeeIds = $this->historicalEmployeeIdsForStorePeriod($storeId, $start, $end);
-
-        $employees = Employee::withTrashed()
-            ->where(function ($query) use ($storeId, $historicalEmployeeIds) {
-                $query->where('store_id', $storeId)
-                    ->orWhereIn('id', $historicalEmployeeIds);
-            })
-            ->where(function ($query) use ($start, $end) {
-                $query->whereNull('deleted_at')
-                    ->orWhereBetween('deleted_at', [$start, $end]);
-            })
-            ->orderBy('name')
-            ->get(['id', 'name', 'salary', 'status', 'deleted_at']);
-
-        $employeeIds = $employees->pluck('id');
-        $withdrawalsQuery = \App\Models\Withdrawal::where('store_id', $storeId)
-            ->where('person_type', Employee::class)
-            ->whereIn('person_id', $employeeIds);
-        app(FinancialSummaryService::class)->applyAccountingPeriodToTable($withdrawalsQuery, 'employee_withdrawals', $start, $end);
-        $withdrawals = $withdrawalsQuery
-            ->selectRaw('person_id, COALESCE(SUM(amount), 0) as total')
-            ->groupBy('person_id')
-            ->pluck('total', 'person_id');
-        $absences = \App\Models\Absence::where('store_id', $storeId)
-            ->where('person_type', Employee::class)
-            ->whereIn('person_id', $employeeIds)
-            ->betweenOperationDates($start, $end)
-            ->selectRaw('person_id, COUNT(*) as count_total')
-            ->groupBy('person_id')
-            ->pluck('count_total', 'person_id');
-        $debts = \App\Models\Debt::where('store_id', $storeId)
-            ->where('person_type', Employee::class)
-            ->whereIn('person_id', $employeeIds)
-            ->betweenOperationDates($start, $end)
-            ->selectRaw('person_id, COALESCE(SUM(amount), 0) as total')
-            ->groupBy('person_id')
-            ->pluck('total', 'person_id');
-        $creditRemaining = \App\Models\CreditSale::where('store_id', $storeId)
-            ->where('person_type', Employee::class)
-            ->whereIn('person_id', $employeeIds)
-            ->selectRaw('person_id, COALESCE(SUM(remaining_amount), 0) as total')
-            ->groupBy('person_id')
-            ->pluck('total', 'person_id');
-
-        return $employees->map(function (Employee $employee) use ($month, $start, $end, $withdrawals, $absences, $debts, $creditRemaining) {
-            $withdrawalTotal = (float) ($withdrawals[$employee->id] ?? 0);
-            $absenceDays = (int) ($absences[$employee->id] ?? 0);
-            $debtTotal = (float) ($debts[$employee->id] ?? 0) + (float) ($creditRemaining[$employee->id] ?? 0);
-            $salaryInfo = EmployeeService::calculateProratedSalaryForEmployee($employee, $start, $end);
-            $payableSalary = (float) $salaryInfo['payable_salary'];
-            $dailySalary = ((float) $employee->salary) / max((int) $start->daysInMonth, 1);
-            $absencePenalty = $dailySalary * $absenceDays;
-            $netSalary = max(0, $payableSalary - $withdrawalTotal - $absencePenalty - $debtTotal);
-
-            return [
-                'id' => $employee->id,
-                'month' => $month,
-                'name' => $employee->name,
-                'base_salary' => (float) $employee->salary,
-                'salary' => $payableSalary,
-                'worked_days' => $salaryInfo['worked_days'],
-                'suspended_days' => $salaryInfo['suspended_days'],
-                'withdrawals' => $withdrawalTotal,
-                'absences_count' => $absenceDays,
-                'absence_penalty' => $absencePenalty,
-                'debts' => $debtTotal,
-                'net_salary' => $netSalary,
-                'remaining' => $netSalary,
-                'status' => $employee->trashed() ? 'محذوف' : ($employee->status ?? 'نشط'),
-            ];
-        });
-    }
-
-
-    private function historicalEmployeeIdsForStorePeriod(int $storeId, $start, $end)
-    {
-        $transferredAfterPeriodEmployeeIds = \App\Models\EmployeeLog::query()
-            ->where('action_name', 'employee_transferred')
-            ->where('person_type', Employee::class)
-            ->where('meta->old_store_id', $storeId)
-            ->where('created_at', '>', $end)
-            ->pluck('person_id');
-
-        $withdrawalEmployeeIdsQuery = \App\Models\Withdrawal::where('store_id', $storeId)
-            ->where('person_type', Employee::class);
-        app(FinancialSummaryService::class)->applyAccountingPeriodToTable($withdrawalEmployeeIdsQuery, 'employee_withdrawals', $start, $end);
-        $withdrawalEmployeeIds = $withdrawalEmployeeIdsQuery->pluck('person_id');
-
-        $absenceEmployeeIds = \App\Models\Absence::where('store_id', $storeId)
-            ->where('person_type', Employee::class)
-            ->betweenOperationDates($start, $end)
-            ->pluck('person_id');
-
-        $debtEmployeeIds = \App\Models\Debt::where('store_id', $storeId)
-            ->where('person_type', Employee::class)
-            ->betweenOperationDates($start, $end)
-            ->pluck('person_id');
-
-        $creditEmployeeIds = \App\Models\CreditSale::where('store_id', $storeId)
-            ->where('person_type', Employee::class)
-            ->betweenOperationDates($start, $end)
-            ->pluck('person_id');
-
-        return $transferredAfterPeriodEmployeeIds
-            ->merge($withdrawalEmployeeIds)
-            ->merge($absenceEmployeeIds)
-            ->merge($debtEmployeeIds)
-            ->merge($creditEmployeeIds)
-            ->map(fn ($employeeId) => (int) $employeeId)
-            ->filter()
-            ->unique()
-            ->values();
-    }
-
-    private function monthlyProratedSalariesTotal(int $storeId, $start, $end): float
-    {
-        $historicalEmployeeIds = $this->historicalEmployeeIdsForStorePeriod($storeId, $start, $end);
-
-        return Employee::withTrashed()
-            ->where(function ($query) use ($storeId, $historicalEmployeeIds) {
-                $query->where('store_id', $storeId)
-                    ->orWhereIn('id', $historicalEmployeeIds);
-            })
-            ->where(function ($query) use ($start, $end) {
-                $query->whereNull('deleted_at')
-                    ->orWhereBetween('deleted_at', [$start, $end]);
-            })
-            ->get(['id', 'salary', 'status', 'deleted_at'])
-            ->sum(fn (Employee $employee) => EmployeeService::calculateProratedSalaryForEmployee($employee, $start, $end)['payable_salary']);
     }
 
 }

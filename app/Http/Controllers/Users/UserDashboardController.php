@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Users;
 
 use App\Http\Controllers\Controller;
-use App\Models\Absence;
 use App\Models\CreditSale;
 use App\Models\Employee;
 use App\Models\Expense;
@@ -22,7 +21,8 @@ use App\Services\Stores\ActiveAccountantService;
 use App\Services\Shifts\ShiftGapInfoService;
 use App\Services\Shifts\ShiftGapRequestService;
 use App\Services\Accounting\FinancialSummaryService;
-use App\Http\Controllers\Employees\EmployeeService;
+use App\Services\Employees\EmployeePayrollService;
+use App\Services\Users\OwnerDashboardViewService;
 
 class UserDashboardController extends Controller
 {
@@ -46,10 +46,11 @@ class UserDashboardController extends Controller
         $salarySummary = $this->buildSalarySummary($user, $storeIds);
         $creditSummary = $this->buildCreditSummary($storeIds);
         $inventorySummary = $this->buildInventorySummary($user->id, $storeIds);
-        $metricStoreBreakdowns = $this->buildStoreBreakdowns(
+        $metricStoreBreakdowns = app(OwnerDashboardViewService::class)->storeBreakdowns(
             $stores,
             $monthlySummary['store_metrics'],
-            $salarySummary['salariesByStore']
+            $salarySummary['salariesByStore'],
+            self::COLLECTED_SALE_TYPES
         );
 
         $subscriptionEnd = $user->subscription_end_at;
@@ -301,54 +302,7 @@ class UserDashboardController extends Controller
 
         $periodStart = now()->startOfMonth();
         $periodEnd = now()->endOfMonth();
-
-        $employeeRows = Employee::withTrashed()
-            ->with('store:id,name')
-            ->whereIn('store_id', $storeIds)
-            ->where(function ($query) use ($periodStart, $periodEnd) {
-                $query->whereNull('deleted_at')
-                    ->orWhereBetween('deleted_at', [$periodStart, $periodEnd]);
-            })
-            ->get(['id', 'store_id', 'name', 'salary', 'status', 'deleted_at']);
-
-        $employeeIds = $employeeRows->pluck('id');
-        $absenceDaysByEmployee = $employeeIds->isEmpty()
-            ? collect()
-            : Absence::whereIn('store_id', $storeIds)
-                ->where('person_type', Employee::class)
-                ->whereIn('person_id', $employeeIds)
-                ->betweenOperationDates($periodStart, $periodEnd)
-                ->selectRaw('person_id, COUNT(*) as absence_days')
-                ->groupBy('person_id')
-                ->pluck('absence_days', 'person_id');
-
-        $employeeMonthlyWithdrawals = $employeeRows
-            ->map(function (Employee $employee) use ($periodStart, $periodEnd, $absenceDaysByEmployee) {
-                $salaryInfo = EmployeeService::calculateProratedSalaryForEmployee($employee, $periodStart, $periodEnd);
-                $withdrawalsQuery = DB::table('employee_withdrawals')
-                    ->where('person_id', $employee->id)
-                    ->where('person_type', Employee::class);
-
-                app(FinancialSummaryService::class)->applyAccountingPeriodToTable($withdrawalsQuery, 'employee_withdrawals', $periodStart, $periodEnd);
-
-                $withdrawalsTotal = (float) $withdrawalsQuery->sum('amount');
-                $absenceDays = (int) ($absenceDaysByEmployee[$employee->id] ?? 0);
-                $absenceDeduction = $absenceDays * (((float) $employee->salary) / max(1, $periodStart->daysInMonth));
-
-                return (object) [
-                    'id' => $employee->id,
-                    'store_id' => $employee->store_id,
-                    'name' => $employee->name,
-                    'store_name' => $employee->store?->name,
-                    'base_salary' => (float) $employee->salary,
-                    'salary' => $salaryInfo['payable_salary'],
-                    'worked_days' => $salaryInfo['worked_days'],
-                    'suspended_days' => $salaryInfo['suspended_days'],
-                    'withdrawals_total' => $withdrawalsTotal,
-                    'absence_days' => $absenceDays,
-                    'absence_deduction' => $absenceDeduction,
-                ];
-            });
+        $employeeMonthlyWithdrawals = app(EmployeePayrollService::class)->salaryRowsForStores($storeIds, $periodStart, $periodEnd);
 
         $salariesByStore = $employeeMonthlyWithdrawals
             ->groupBy('store_id')
@@ -374,13 +328,7 @@ class UserDashboardController extends Controller
             ->values();
 
         $monthlySalaries = (float) $salariesByStore->sum();
-        $monthlyWorkerWithdrawalsQuery = DB::table('employee_withdrawals')
-            ->whereIn('store_id', $storeIds)
-            ->where('person_type', Employee::class);
-
-        app(FinancialSummaryService::class)->applyAccountingPeriodToTable($monthlyWorkerWithdrawalsQuery, 'employee_withdrawals', $periodStart, $periodEnd);
-
-        $monthlyWorkerWithdrawals = (float) $monthlyWorkerWithdrawalsQuery->sum('amount');
+        $monthlyWorkerWithdrawals = (float) $employeeMonthlyWithdrawals->sum('withdrawals_total');
         $monthlyAbsenceDeductions = (float) $employeeMonthlyWithdrawals->sum('absence_deduction');
 
         return [
@@ -472,48 +420,6 @@ class UserDashboardController extends Controller
             'lowStockCount' => $lowStockProducts->count(),
             'topSellingProducts' => $topSellingProducts,
         ];
-    }
-
-    /**
-     * بناء تفاصيل البطاقات من نتائج مجمعة بدل استعلامات داخل حلقة المتاجر.
-     */
-    private function buildStoreBreakdowns(
-        Collection $stores,
-        array $monthlyMetrics,
-        Collection $salariesByStore
-    ): array
-    {
-        $storeIds = $stores->pluck('id');
-        $todayStart = today()->startOfDay();
-        $todayEnd = today()->endOfDay();
-        $dailyFinancialSummary = app(FinancialSummaryService::class)->storeSummariesForPeriod(
-            $storeIds,
-            $todayStart,
-            $todayEnd,
-            self::COLLECTED_SALE_TYPES
-        );
-        return $stores->map(function ($store) use (
-            $dailyFinancialSummary,
-            $salariesByStore,
-            $monthlyMetrics
-        ) {
-            $storeId = $store->id;
-            $dailyMetrics = $dailyFinancialSummary->summariesByStore->get($storeId);
-            $salesToday = (float) ($dailyMetrics?->sales ?? 0);
-            $productsCostToday = (float) ($dailyMetrics?->productsCost ?? 0);
-            $month = $monthlyMetrics[$storeId] ?? [];
-
-            return array_merge([
-                'store_id' => $storeId,
-                'store_name' => $store->name,
-                // المصروفات تعرض منفصلة ولا تخصم من ربح اليوم.
-                'profit_today' => $salesToday - $productsCostToday,
-                'sales_today' => $salesToday,
-                'expenses_today' => (float) ($dailyMetrics?->expenses ?? 0),
-                'products_cost_today' => $productsCostToday,
-                'salaries_month' => (float) ($salariesByStore[$storeId] ?? 0),
-            ], $month);
-        })->values()->all();
     }
 
     /**
