@@ -239,18 +239,13 @@ class MonthlyStoreReportService
 
     private function monthlyEmployeeRows(int $storeId, string $month, $start, $end)
     {
-        // يشمل الموظف في تقرير المتجر القديم إذا تم نقله بعد نهاية شهر التقرير حتى لا تتغير تقارير الشهور السابقة.
-        $transferredAfterPeriodEmployeeIds = \App\Models\EmployeeLog::query()
-            ->where('action_name', 'employee_transferred')
-            ->where('person_type', Employee::class)
-            ->where('meta->old_store_id', $storeId)
-            ->where('created_at', '>', $end)
-            ->pluck('person_id');
+        // يشمل التقرير الموظفين الحاليين، والمنقولين بعد الفترة، وأي موظف لديه عملية مخزنة على هذا المتجر داخل الفترة.
+        $historicalEmployeeIds = $this->historicalEmployeeIdsForStorePeriod($storeId, $start, $end);
 
         $employees = Employee::withTrashed()
-            ->where(function ($query) use ($storeId, $transferredAfterPeriodEmployeeIds) {
+            ->where(function ($query) use ($storeId, $historicalEmployeeIds) {
                 $query->where('store_id', $storeId)
-                    ->orWhereIn('id', $transferredAfterPeriodEmployeeIds);
+                    ->orWhereIn('id', $historicalEmployeeIds);
             })
             ->where(function ($query) use ($start, $end) {
                 $query->whereNull('deleted_at')
@@ -318,7 +313,8 @@ class MonthlyStoreReportService
         });
     }
 
-    private function monthlyProratedSalariesTotal(int $storeId, $start, $end): float
+
+    private function historicalEmployeeIdsForStorePeriod(int $storeId, $start, $end)
     {
         $transferredAfterPeriodEmployeeIds = \App\Models\EmployeeLog::query()
             ->where('action_name', 'employee_transferred')
@@ -327,10 +323,45 @@ class MonthlyStoreReportService
             ->where('created_at', '>', $end)
             ->pluck('person_id');
 
+        $withdrawalEmployeeIdsQuery = \App\Models\Withdrawal::where('store_id', $storeId)
+            ->where('person_type', Employee::class);
+        app(FinancialSummaryService::class)->applyAccountingPeriodToTable($withdrawalEmployeeIdsQuery, 'employee_withdrawals', $start, $end);
+        $withdrawalEmployeeIds = $withdrawalEmployeeIdsQuery->pluck('person_id');
+
+        $absenceEmployeeIds = \App\Models\Absence::where('store_id', $storeId)
+            ->where('person_type', Employee::class)
+            ->betweenOperationDates($start, $end)
+            ->pluck('person_id');
+
+        $debtEmployeeIds = \App\Models\Debt::where('store_id', $storeId)
+            ->where('person_type', Employee::class)
+            ->betweenOperationDates($start, $end)
+            ->pluck('person_id');
+
+        $creditEmployeeIds = \App\Models\CreditSale::where('store_id', $storeId)
+            ->where('person_type', Employee::class)
+            ->betweenOperationDates($start, $end)
+            ->pluck('person_id');
+
+        return $transferredAfterPeriodEmployeeIds
+            ->merge($withdrawalEmployeeIds)
+            ->merge($absenceEmployeeIds)
+            ->merge($debtEmployeeIds)
+            ->merge($creditEmployeeIds)
+            ->map(fn ($employeeId) => (int) $employeeId)
+            ->filter()
+            ->unique()
+            ->values();
+    }
+
+    private function monthlyProratedSalariesTotal(int $storeId, $start, $end): float
+    {
+        $historicalEmployeeIds = $this->historicalEmployeeIdsForStorePeriod($storeId, $start, $end);
+
         return Employee::withTrashed()
-            ->where(function ($query) use ($storeId, $transferredAfterPeriodEmployeeIds) {
+            ->where(function ($query) use ($storeId, $historicalEmployeeIds) {
                 $query->where('store_id', $storeId)
-                    ->orWhereIn('id', $transferredAfterPeriodEmployeeIds);
+                    ->orWhereIn('id', $historicalEmployeeIds);
             })
             ->where(function ($query) use ($start, $end) {
                 $query->whereNull('deleted_at')

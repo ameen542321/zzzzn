@@ -28,6 +28,7 @@ class EmployeeActionsController extends Controller
         return view('employees.actions', [
             'employee' => $person,
             'returnTo' => $returnTo,
+            'operationSummary' => $this->operationSummary($person),
         ]);
     }
 
@@ -518,6 +519,28 @@ public function collectPartialCreditSale($employeeId, CreditSale $sale, $amount)
         ]);
     }
 
+
+
+    private function operationSummary($person): array
+    {
+        return [
+            'withdrawals_total' => $this->relationSum($person, 'withdrawals', 'amount'),
+            'debts_total' => $this->relationSum($person, 'debts', 'amount'),
+            'credit_remaining_total' => $this->relationSum($person, 'creditSales', 'remaining_amount'),
+            'absences_count' => $this->relationCount($person, 'absences'),
+            'logs_count' => $this->relationCount($person, 'logs'),
+        ];
+    }
+
+    private function relationSum($person, string $relation, string $column): float
+    {
+        return method_exists($person, $relation) ? (float) $person->{$relation}()->sum($column) : 0.0;
+    }
+
+    private function relationCount($person, string $relation): int
+    {
+        return method_exists($person, $relation) ? (int) $person->{$relation}()->count() : 0;
+    }
 
     private function notifyStoreOwnerForInternalOps($person, string $title, string $message, ?string $templateKey = null): void
     {

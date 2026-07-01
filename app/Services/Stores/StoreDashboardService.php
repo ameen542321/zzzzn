@@ -9,6 +9,7 @@ use App\Models\Log;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\Store;
+use App\Services\Accounting\FinancialSummaryService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -29,9 +30,7 @@ class StoreDashboardService
             'todaySales' => $this->billableSales($store)->forAccountingDate(today()->toDateString())->sum('paid_amount'),
             'monthSales' => $this->monthlyBillableSales($store, $now)->sum('paid_amount'),
             'invoicesCount' => $this->monthlyBillableSales($store, $now)->count(),
-            'totalProfit' => $this->monthlySales($store, $now)
-                ->selectRaw('COALESCE(SUM(paid_amount - ((products_total + labor_total) - profit)), 0) as total_profit')
-                ->value('total_profit'),
+            'totalProfit' => $this->periodProfit($store, $now->copy()->startOfMonth(), $now->copy()->endOfMonth()),
             'topProducts' => $this->topProducts($store, $now),
             'operations' => Log::where('store_id', $store->id)
                 ->with('user')
@@ -72,6 +71,15 @@ class StoreDashboardService
             ->count();
     }
 
+
+    private function periodProfit(Store $store, $periodStart, $periodEnd): float
+    {
+        return app(FinancialSummaryService::class)
+            ->storeSummariesForPeriod(collect([$store->id]), $periodStart, $periodEnd, self::INCLUDED_SALE_TYPES)
+            ->totals()
+            ->profit();
+    }
+
     private function topProducts(Store $store, Carbon $now)
     {
         return Product::where('store_id', $store->id)
@@ -94,11 +102,10 @@ class StoreDashboardService
             ->betweenAccountingDates($sevenDaysStart, $sevenDaysEnd)
             ->select(
                 DB::raw('COALESCE(business_date, DATE(created_at)) as date'),
-                DB::raw('SUM(paid_amount) as total_sales'),
-                DB::raw('COALESCE(SUM(paid_amount - ((products_total + labor_total) - profit)), 0) as total_profit')
+                DB::raw('SUM(paid_amount) as total_sales')
             )
             ->groupBy('date')
-            ->get();
+            ->pluck('total_sales', 'date');
 
         $chartLabels = [];
         $chartData = [];
@@ -107,11 +114,10 @@ class StoreDashboardService
         for ($i = 6; $i >= 0; $i--) {
             $date = now()->subDays($i)->format('Y-m-d');
             $dayName = now()->subDays($i)->translatedFormat('l');
-            $stats = $sevenDaysStats->firstWhere('date', $date);
 
             $chartLabels[] = $dayName;
-            $chartData[] = $stats ? (float) $stats->total_sales : 0;
-            $profitData[] = $stats ? (float) $stats->total_profit : 0;
+            $chartData[] = (float) ($sevenDaysStats[$date] ?? 0);
+            $profitData[] = $this->periodProfit($store, $date, $date);
         }
 
         return compact('chartLabels', 'chartData', 'profitData');
@@ -142,14 +148,19 @@ class StoreDashboardService
                 DB::raw('MONTH(COALESCE(business_date, DATE(created_at))) as month'),
                 DB::raw('YEAR(COALESCE(business_date, DATE(created_at))) as year'),
                 DB::raw('SUM(paid_amount) as total_sales'),
-                DB::raw('COUNT(*) as sales_count'),
-                DB::raw('COALESCE(SUM(paid_amount - ((products_total + labor_total) - profit)), 0) as total_profit')
+                DB::raw('COUNT(*) as sales_count')
             )
             ->whereRaw('YEAR(COALESCE(business_date, DATE(created_at))) = ?', [date('Y')])
             ->groupBy('year', 'month')
             ->orderBy('year', 'desc')
             ->orderBy('month', 'desc')
-            ->get();
+            ->get()
+            ->map(function ($monthStats) use ($store) {
+                $monthStart = Carbon::create((int) $monthStats->year, (int) $monthStats->month, 1)->startOfMonth();
+                $monthStats->total_profit = $this->periodProfit($store, $monthStart, $monthStart->copy()->endOfMonth());
+
+                return $monthStats;
+            });
     }
 
     private function productStats(Store $store)

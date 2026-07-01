@@ -39,6 +39,28 @@
 
 </div>
 
+    @php
+        $operationSummaryCards = [
+            ['label' => 'إجمالي السحوبات', 'value' => number_format($operationSummary['withdrawals_total'] ?? 0, 2), 'suffix' => 'ريال', 'color' => 'text-sky-300'],
+            ['label' => 'إجمالي المديونيات', 'value' => number_format($operationSummary['debts_total'] ?? 0, 2), 'suffix' => 'ريال', 'color' => 'text-rose-300'],
+            ['label' => 'الآجل المتبقي', 'value' => number_format($operationSummary['credit_remaining_total'] ?? 0, 2), 'suffix' => 'ريال', 'color' => 'text-violet-300'],
+            ['label' => 'أيام الغياب', 'value' => (int) ($operationSummary['absences_count'] ?? 0), 'suffix' => 'يوم', 'color' => 'text-amber-300'],
+            ['label' => 'سجلات العمليات', 'value' => (int) ($operationSummary['logs_count'] ?? 0), 'suffix' => 'سجل', 'color' => 'text-emerald-300'],
+        ];
+    @endphp
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 mb-8">
+        @foreach($operationSummaryCards as $summaryCard)
+            <div class="rounded-2xl border border-gray-800 bg-gray-900/70 p-4 shadow-lg">
+                <p class="text-xs text-gray-500 mb-2">{{ $summaryCard['label'] }}</p>
+                <div class="flex items-end gap-1">
+                    <span class="text-2xl font-black {{ $summaryCard['color'] }}">{{ $summaryCard['value'] }}</span>
+                    <span class="text-[11px] text-gray-500 pb-1">{{ $summaryCard['suffix'] }}</span>
+                </div>
+            </div>
+        @endforeach
+    </div>
+
 
     <!-- العمليات -->
     <div class="bg-gray-900/80 border border-gray-800 rounded-2xl p-6 md:p-7 shadow-xl backdrop-blur-sm">
