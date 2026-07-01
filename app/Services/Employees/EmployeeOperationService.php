@@ -112,6 +112,17 @@ class EmployeeOperationService
         return $absence;
     }
 
+
+    public function resolveOperationContext(int $storeId, string $requestedDate, bool $useShiftGapDate = false): array
+    {
+        $shiftContext = app(ShiftLifecycleService::class)->currentShiftContext($storeId, now());
+
+        return [
+            'shift_context' => $shiftContext,
+            'operation_date' => $this->operationDate($requestedDate, $shiftContext, $useShiftGapDate),
+        ];
+    }
+
     public function actorFromCurrentAuth(): array
     {
         $accountant = auth('accountant')->user();

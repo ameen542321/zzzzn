@@ -175,13 +175,16 @@ class EmployeeFinanceController extends Controller
     ]);
 
     $description = trim($request->description) ?: null;
+    $employeeOperationService = app(EmployeeOperationService::class);
+    $operationContext = $employeeOperationService->resolveOperationContext($person->store_id, $request->date, true);
+    $operationDate = $operationContext['operation_date'];
 
     // منع التكرار
     $exists = CreditSale::where('store_id', $person->store_id)
         ->where('person_id', $person->id)
         ->where('amount', $request->amount)
         ->where('description', $description)
-        ->forOperationDate($request->date)
+        ->forOperationDate($operationDate->toDateString())
         ->exists();
 
     if ($exists) {
@@ -199,9 +202,9 @@ class EmployeeFinanceController extends Controller
         'remaining_amount' => $request->amount,
         'partial_payments' => [],
         'description'      => $description,
-        'date'             => $request->date,
+        'date'             => $operationDate->toDateString(),
         'status'           => 'pending',
-        'month'            => now()->format('Y-m'),
+        'month'            => $operationDate->format('Y-m'),
         'added_by'         => $accountant->id,
     ]);
 
@@ -366,13 +369,16 @@ public function storeCollection(Request $request, $saleId)
     ]);
 
     $description = trim($request->description) ?: null;
+    $employeeOperationService = app(EmployeeOperationService::class);
+    $operationContext = $employeeOperationService->resolveOperationContext($person->store_id, $request->date, true);
+    $operationDate = $operationContext['operation_date'];
 
     // منع التكرار خلال نفس اليوم
     $exists = Debt::where('store_id', $person->store_id)
         ->where('person_id', $person->id)
         ->where('amount', $request->amount)
         ->where('description', $description)
-        ->forOperationDate($request->date)
+        ->forOperationDate($operationDate->toDateString())
         ->exists();
 
     if ($exists) {
@@ -388,9 +394,9 @@ public function storeCollection(Request $request, $saleId)
         'person_type' => Employee::class,
         'amount'      => $request->amount,
         'description' => $description,
-        'date'        => $request->date,
+        'date'        => $operationDate->toDateString(),
         'status'      => 'pending',
-        'month'       => now()->format('Y-m'),
+        'month'       => $operationDate->format('Y-m'),
         'added_by'    => $accountant->id,
     ]);
 
@@ -443,6 +449,8 @@ public function collectPartial(Request $request, $debtId)
     $person = $debt->person;
     $this->authorizePerson($person);
     $accountant = auth('accountant')->user();
+    $operationContext = app(EmployeeOperationService::class)->resolveOperationContext($person->store_id, now()->toDateString(), true);
+    $operationDate = $operationContext['operation_date'];
 
     // 🔥 منع المحاسب من تحصيل مديونيته الشخصية
     if ($person->id == $accountant->employee_id) {
@@ -459,7 +467,7 @@ public function collectPartial(Request $request, $debtId)
         ->where('person_id', $person->id)
         ->where('amount', -$amount)
         ->where('description', 'تحصيل جزئي')
-        ->forOperationDate(today()->toDateString())
+        ->forOperationDate($operationDate->toDateString())
         ->exists();
 
     if ($exists) {
@@ -473,9 +481,9 @@ public function collectPartial(Request $request, $debtId)
         'person_type' => Employee::class,
         'amount'      => -$amount,
         'description' => 'تحصيل جزئي',
-        'date'        => now()->toDateString(),
+        'date'        => $operationDate->toDateString(),
         'status'      => 'pending',
-        'month'       => now()->format('Y-m'),
+        'month'       => $operationDate->format('Y-m'),
         'added_by'    => $accountant->id,
     ]);
 
@@ -524,6 +532,8 @@ public function collectFull($debtId)
     $person = $debt->person;
     $this->authorizePerson($person);
     $accountant = auth('accountant')->user();
+    $operationContext = app(EmployeeOperationService::class)->resolveOperationContext($person->store_id, now()->toDateString(), true);
+    $operationDate = $operationContext['operation_date'];
 
     // 🔥 منع المحاسب من تحصيل مديونيته الشخصية
     if ($person->id == $accountant->employee_id) {
@@ -535,7 +545,7 @@ public function collectFull($debtId)
         ->where('person_id', $person->id)
         ->where('amount', -$debt->amount)
         ->where('description', 'تحصيل كامل')
-        ->forOperationDate(today()->toDateString())
+        ->forOperationDate($operationDate->toDateString())
         ->exists();
 
     if ($exists) {
@@ -551,9 +561,9 @@ public function collectFull($debtId)
         'person_type' => Employee::class,
         'amount'      => -$collectedAmount,
         'description' => 'تحصيل كامل',
-        'date'        => now()->toDateString(),
+        'date'        => $operationDate->toDateString(),
         'status'      => 'pending',
-        'month'       => now()->format('Y-m'),
+        'month'       => $operationDate->format('Y-m'),
         'added_by'    => $accountant->id,
     ]);
 
