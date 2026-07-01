@@ -2,6 +2,8 @@
 
 namespace App\Services\Accounting;
 
+use App\Data\Finance\FinancialSummaryResult;
+use App\Data\Finance\StoreFinancialSummary;
 use App\Models\Sale;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -14,8 +16,42 @@ class FinancialSummaryService
      * يبني ملخصًا ماليًا مجمعًا لكل متجر خلال فترة محاسبية واحدة.
      *
      * القيم هنا تستخدم business_date عند توفره، وتعود إلى created_at فقط كدعم للبيانات القديمة.
+     * هذه الدالة تبقى مؤقتًا للمسارات القديمة التي تتوقع مصفوفات.
      */
     public function storeMetricsForPeriod(Collection $storeIds, $periodStart, $periodEnd, array $includedSaleTypes): array
+    {
+        [$summaryResult, $rawAggregatesByStore] = $this->buildStoreSummariesForPeriod(
+            $storeIds,
+            $periodStart,
+            $periodEnd,
+            $includedSaleTypes
+        );
+
+        return $summaryResult->toLegacyArray(
+            $rawAggregatesByStore['sales'],
+            $rawAggregatesByStore['products_cost'],
+            $rawAggregatesByStore['expenses'],
+            $rawAggregatesByStore['owner_purchases'],
+            $rawAggregatesByStore['internal_use'],
+        );
+    }
+
+    /**
+     * النسخة الحديثة المعتمدة تدريجيًا: تعيد DTOs مالية بدل مفاتيح مصفوفات متفرقة.
+     */
+    public function storeSummariesForPeriod(Collection $storeIds, $periodStart, $periodEnd, array $includedSaleTypes): FinancialSummaryResult
+    {
+        [$summaryResult] = $this->buildStoreSummariesForPeriod(
+            $storeIds,
+            $periodStart,
+            $periodEnd,
+            $includedSaleTypes
+        );
+
+        return $summaryResult;
+    }
+
+    private function buildStoreSummariesForPeriod(Collection $storeIds, $periodStart, $periodEnd, array $includedSaleTypes): array
     {
         $storeIds = $storeIds->map(fn ($storeId) => (int) $storeId)->filter()->values();
 
@@ -30,46 +66,33 @@ class FinancialSummaryService
         $ownerPurchasesByStore = $this->sumByStoreForPeriod('purchases', 'cost', $storeIds, $periodStart, $periodEnd);
         $internalUseByStore = $this->internalUseByStore($storeIds, $periodStart, $periodEnd);
 
-        $metricsByStore = [];
-        foreach ($storeIds as $storeId) {
-            $sales = (float) ($salesByStore[$storeId] ?? 0);
-            $productsCost = (float) ($productsCostByStore[$storeId] ?? 0);
-            $expenses = (float) ($expensesByStore[$storeId] ?? 0);
-            $ownerPurchases = (float) ($ownerPurchasesByStore[$storeId] ?? 0);
-            $internalUse = (float) ($internalUseByStore[$storeId] ?? 0);
-
-            $metricsByStore[$storeId] = [
-                'sales' => $sales,
-                'products_cost' => $productsCost,
-                'expenses' => $expenses,
-                'owner_purchases' => $ownerPurchases,
-                'internal_use' => $internalUse,
-                'purchases_and_internal_use' => $ownerPurchases + $internalUse,
-                'profit' => $sales - $productsCost - $expenses - $ownerPurchases - $internalUse,
+        $summariesByStore = $storeIds->mapWithKeys(function (int $storeId) use (
+            $salesByStore,
+            $productsCostByStore,
+            $expensesByStore,
+            $ownerPurchasesByStore,
+            $internalUseByStore
+        ) {
+            return [
+                $storeId => new StoreFinancialSummary(
+                    storeId: $storeId,
+                    sales: (float) ($salesByStore[$storeId] ?? 0),
+                    productsCost: (float) ($productsCostByStore[$storeId] ?? 0),
+                    expenses: (float) ($expensesByStore[$storeId] ?? 0),
+                    ownerPurchases: (float) ($ownerPurchasesByStore[$storeId] ?? 0),
+                    internalUse: (float) ($internalUseByStore[$storeId] ?? 0),
+                ),
             ];
-        }
-
-        $salesTotal = (float) $salesByStore->sum();
-        $productsCostTotal = array_sum(array_column($metricsByStore, 'products_cost'));
-        $expensesTotal = (float) $expensesByStore->sum();
-        $ownerPurchasesTotal = (float) $ownerPurchasesByStore->sum();
-        $internalUseTotal = (float) $internalUseByStore->sum();
+        });
 
         return [
-            'sales_by_store' => $salesByStore,
-            'products_cost_by_store' => $productsCostByStore,
-            'expenses_by_store' => $expensesByStore,
-            'owner_purchases_by_store' => $ownerPurchasesByStore,
-            'internal_use_by_store' => $internalUseByStore,
-            'metrics_by_store' => $metricsByStore,
-            'totals' => [
-                'sales' => $salesTotal,
-                'products_cost' => $productsCostTotal,
-                'expenses' => $expensesTotal,
-                'owner_purchases' => $ownerPurchasesTotal,
-                'internal_use' => $internalUseTotal,
-                'purchases_and_internal_use' => $ownerPurchasesTotal + $internalUseTotal,
-                'profit' => $salesTotal - $productsCostTotal - $expensesTotal - $ownerPurchasesTotal - $internalUseTotal,
+            new FinancialSummaryResult($summariesByStore),
+            [
+                'sales' => $salesByStore,
+                'products_cost' => $productsCostByStore,
+                'expenses' => $expensesByStore,
+                'owner_purchases' => $ownerPurchasesByStore,
+                'internal_use' => $internalUseByStore,
             ],
         ];
     }

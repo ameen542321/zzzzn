@@ -21,23 +21,24 @@ class FinancialController extends Controller
         $periodStart = Carbon::create(1970, 1, 1)->startOfDay();
         $periodEnd = now()->endOfDay();
 
-        $financialMetrics = app(FinancialSummaryService::class)->storeMetricsForPeriod(
+        $financialSummaryService = app(FinancialSummaryService::class);
+        $financialTotals = $financialSummaryService->storeSummariesForPeriod(
             $storeIds,
             $periodStart,
             $periodEnd,
             self::COLLECTED_SALE_TYPES
-        );
+        )->totals();
 
-        $todayFinancialMetrics = app(FinancialSummaryService::class)->storeMetricsForPeriod(
+        $todayFinancialTotals = $financialSummaryService->storeSummariesForPeriod(
             $storeIds,
             today(),
             today(),
             self::COLLECTED_SALE_TYPES
-        );
+        )->totals();
 
-        $totalSales = (float) ($financialMetrics['totals']['sales'] ?? 0);
-        $todaySales = (float) ($todayFinancialMetrics['totals']['sales'] ?? 0);
-        $totalCost = (float) ($financialMetrics['totals']['products_cost'] ?? 0);
+        $totalSales = $financialTotals->sales;
+        $todaySales = $todayFinancialTotals->sales;
+        $totalCost = $financialTotals->productsCost;
         $profit = $totalSales - $totalCost;
 
         $salesByType = Sale::query()
@@ -88,15 +89,15 @@ class FinancialController extends Controller
     public function profitLoss()
     {
         $storeIds = auth()->user()->stores->pluck('id');
-        $financialMetrics = app(FinancialSummaryService::class)->storeMetricsForPeriod(
+        $financialTotals = app(FinancialSummaryService::class)->storeSummariesForPeriod(
             $storeIds,
             Carbon::create(1970, 1, 1)->startOfDay(),
             now()->endOfDay(),
             self::COLLECTED_SALE_TYPES
-        );
+        )->totals();
 
-        $totalSales = (float) ($financialMetrics['totals']['sales'] ?? 0);
-        $totalCost = (float) ($financialMetrics['totals']['products_cost'] ?? 0);
+        $totalSales = $financialTotals->sales;
+        $totalCost = $financialTotals->productsCost;
         $profit = $totalSales - $totalCost;
 
         return view('financial.profit-loss', compact(
