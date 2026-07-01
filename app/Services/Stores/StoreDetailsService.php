@@ -3,7 +3,6 @@
 namespace App\Services\Stores;
 
 use App\Models\Absence;
-use App\Models\CreditSale;
 use App\Models\DailyBalance;
 use App\Models\Debt;
 use App\Models\Employee;
@@ -26,7 +25,6 @@ class StoreDetailsService
     {
         $now = now();
         $today = today();
-        $currentMonthText = $now->format('Y-m');
         $monthStart = $now->copy()->startOfMonth();
         $monthEnd = $now->copy()->endOfMonth();
 
@@ -59,11 +57,7 @@ class StoreDetailsService
         $totalMonthlySalaries = $store->employees()->sum('salary') ?? 0;
 
         $monthlyWithdrawals = $this->monthlyPendingWithdrawals($store, $monthStart, $monthEnd);
-        $monthlyDebts = $this->monthlyPendingDebts($store, $monthStart, $monthEnd);
         $monthlyAbsences = $this->monthlyPendingAbsences($store, $monthStart, $monthEnd);
-
-        $creditSales = CreditSale::where('store_id', $store->id)->where('status', 'pending')->sum('remaining_amount') ?? 0;
-        $monthlyCollections = CreditSale::where('store_id', $store->id)->where('status', 'deducted')->where('deducted_month', $currentMonthText)->sum('amount') ?? 0;
 
         $activeEmployees = $store->employees()->where('status', 'active')->count();
         $suspendedEmployees = $store->employees()->where('status', 'suspended')->count();
@@ -105,6 +99,9 @@ class StoreDetailsService
         $todayStoreMetrics = $todayFinancialMetrics['metrics_by_store'][$store->id] ?? [];
         $monthlySales = (float) ($monthlyStoreMetrics['sales'] ?? 0);
         $todaySales = (float) ($todayStoreMetrics['sales'] ?? 0);
+        $monthlyDebts = (float) ($monthlyStoreMetrics['employee_debt_balance'] ?? 0);
+        $creditSales = (float) ($monthlyStoreMetrics['employee_credit_outstanding'] ?? 0);
+        $monthlyCollections = (float) ($monthlyStoreMetrics['employee_credit_collections'] ?? 0);
 
         $cashSales = $this->salesTotalByTypeForPeriod($store, 'cash', $monthStart, $monthEnd);
         $cardSales = $this->salesTotalByTypeForPeriod($store, 'card', $monthStart, $monthEnd);
@@ -164,16 +161,6 @@ class StoreDetailsService
             ->where('store_id', $store->id)
             ->where('status', 'pending')
             ->betweenAccountingDates($monthStart, $monthEnd)
-            ->sum('amount');
-    }
-
-    private function monthlyPendingDebts(Store $store, CarbonInterface $monthStart, CarbonInterface $monthEnd): float
-    {
-        // المديونية لها تاريخ عملية مستقل؛ لا نعتمد على month وحده لأنه قد لا يطابق الشفت المرجعي.
-        return (float) Debt::query()
-            ->where('store_id', $store->id)
-            ->where('status', 'pending')
-            ->betweenOperationDates($monthStart, $monthEnd)
             ->sum('amount');
     }
 

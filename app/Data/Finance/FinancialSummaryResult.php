@@ -27,6 +27,9 @@ final readonly class FinancialSummaryResult
             expenses: (float) $this->summariesByStore->sum(fn (StoreFinancialSummary $summary) => $summary->expenses),
             ownerPurchases: (float) $this->summariesByStore->sum(fn (StoreFinancialSummary $summary) => $summary->ownerPurchases),
             internalUse: (float) $this->summariesByStore->sum(fn (StoreFinancialSummary $summary) => $summary->internalUse),
+            employeeDebtBalance: (float) $this->summariesByStore->sum(fn (StoreFinancialSummary $summary) => $summary->employeeDebtBalance),
+            employeeCreditOutstanding: (float) $this->summariesByStore->sum(fn (StoreFinancialSummary $summary) => $summary->employeeCreditOutstanding),
+            employeeCreditCollections: (float) $this->summariesByStore->sum(fn (StoreFinancialSummary $summary) => $summary->employeeCreditCollections),
         );
     }
 

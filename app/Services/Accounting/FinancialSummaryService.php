@@ -4,6 +4,8 @@ namespace App\Services\Accounting;
 
 use App\Data\Finance\FinancialSummaryResult;
 use App\Data\Finance\StoreFinancialSummary;
+use App\Models\CreditSale;
+use App\Models\Debt;
 use App\Models\Sale;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -65,13 +67,19 @@ class FinancialSummaryService
         $expensesByStore = $this->sumByStoreForPeriod('expenses', 'amount', $storeIds, $periodStart, $periodEnd);
         $ownerPurchasesByStore = $this->sumByStoreForPeriod('purchases', 'cost', $storeIds, $periodStart, $periodEnd);
         $internalUseByStore = $this->internalUseByStore($storeIds, $periodStart, $periodEnd);
+        $employeeDebtBalanceByStore = $this->employeeDebtBalanceByStore($storeIds, $periodStart, $periodEnd);
+        $employeeCreditOutstandingByStore = $this->employeeCreditOutstandingByStore($storeIds, $periodStart, $periodEnd);
+        $employeeCreditCollectionsByStore = $this->employeeCreditCollectionsByStore($storeIds, $periodStart, $periodEnd);
 
         $summariesByStore = $storeIds->mapWithKeys(function (int $storeId) use (
             $salesByStore,
             $productsCostByStore,
             $expensesByStore,
             $ownerPurchasesByStore,
-            $internalUseByStore
+            $internalUseByStore,
+            $employeeDebtBalanceByStore,
+            $employeeCreditOutstandingByStore,
+            $employeeCreditCollectionsByStore
         ) {
             return [
                 $storeId => new StoreFinancialSummary(
@@ -81,6 +89,9 @@ class FinancialSummaryService
                     expenses: (float) ($expensesByStore[$storeId] ?? 0),
                     ownerPurchases: (float) ($ownerPurchasesByStore[$storeId] ?? 0),
                     internalUse: (float) ($internalUseByStore[$storeId] ?? 0),
+                    employeeDebtBalance: (float) ($employeeDebtBalanceByStore[$storeId] ?? 0),
+                    employeeCreditOutstanding: (float) ($employeeCreditOutstandingByStore[$storeId] ?? 0),
+                    employeeCreditCollections: (float) ($employeeCreditCollectionsByStore[$storeId] ?? 0),
                 ),
             ];
         });
@@ -131,6 +142,52 @@ class FinancialSummaryService
             ->where('sale_type', 'internal_use')
             ->groupBy('store_id')
             ->selectRaw('store_id, COALESCE(SUM(total), 0) as aggregate')
+            ->pluck('aggregate', 'store_id');
+    }
+
+    /**
+     * مديونيات الموظفين مؤشر ذمم فقط، ولا يدخل في ربح المتجر أو كاش الشفت.
+     */
+    public function employeeDebtBalanceByStore(Collection $storeIds, $periodStart, $periodEnd): Collection
+    {
+        return Debt::query()
+            ->whereIn('store_id', $storeIds)
+            ->where('status', 'pending')
+            ->betweenOperationDates($periodStart, $periodEnd)
+            ->groupBy('store_id')
+            ->selectRaw('store_id, COALESCE(SUM(amount), 0) as aggregate')
+            ->pluck('aggregate', 'store_id');
+    }
+
+    /**
+     * البيع الآجل المتبقي مؤشر ذمم فقط، ولا يعد مبيعًا نقديًا ولا يدخل في إغلاق الشفت افتراضيًا.
+     */
+    public function employeeCreditOutstandingByStore(Collection $storeIds, $periodStart, $periodEnd): Collection
+    {
+        return CreditSale::query()
+            ->whereIn('store_id', $storeIds)
+            ->where('status', 'pending')
+            ->where('remaining_amount', '>', 0)
+            ->betweenOperationDates($periodStart, $periodEnd)
+            ->groupBy('store_id')
+            ->selectRaw('store_id, COALESCE(SUM(remaining_amount), 0) as aggregate')
+            ->pluck('aggregate', 'store_id');
+    }
+
+    /**
+     * تحصيلات الآجل مؤشر متابعة فقط. نستخدم updated_at لأن الجدول لا يملك تاريخ تحصيل مستقلًا بعد.
+     */
+    public function employeeCreditCollectionsByStore(Collection $storeIds, $periodStart, $periodEnd): Collection
+    {
+        return CreditSale::query()
+            ->whereIn('store_id', $storeIds)
+            ->where('status', 'deducted')
+            ->whereBetween('updated_at', [
+                Carbon::parse($periodStart)->startOfDay(),
+                Carbon::parse($periodEnd)->endOfDay(),
+            ])
+            ->groupBy('store_id')
+            ->selectRaw('store_id, COALESCE(SUM(amount), 0) as aggregate')
             ->pluck('aggregate', 'store_id');
     }
 
