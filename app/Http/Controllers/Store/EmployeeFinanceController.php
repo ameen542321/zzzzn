@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Store;
 use App\Helpers\LogHelper;
 use App\Models\Debt;
 use App\Models\Absence;
-use App\Models\Expense;
 use App\Models\Employee;
 use App\Models\CreditSale;
 use App\Models\Withdrawal;
@@ -168,64 +167,28 @@ class EmployeeFinanceController extends Controller
     $person = $this->findPerson($id);
     $this->authorizePerson($person);
 
-    $request->validate([
+    $validated = $request->validate([
         'amount'      => 'required|numeric|min:0.01',
         'description' => 'nullable|string|max:255',
         'date'        => 'required|date',
     ]);
 
-    $description = trim($request->description) ?: null;
     $employeeOperationService = app(EmployeeOperationService::class);
-    $operationContext = $employeeOperationService->resolveOperationContext($person->store_id, $request->date, true);
-    $operationDate = $operationContext['operation_date'];
 
-    // منع التكرار
-    $exists = CreditSale::where('store_id', $person->store_id)
-        ->where('person_id', $person->id)
-        ->where('amount', $request->amount)
-        ->where('description', $description)
-        ->forOperationDate($operationDate->toDateString())
-        ->exists();
-
-    if ($exists) {
-        return back()->with('error', 'تم تسجيل البيع الآجل مسبقًا بنفس البيانات في تاريخ العملية');
+    try {
+        $employeeOperationService->recordCreditSale(
+            $person,
+            $validated,
+            $employeeOperationService->actorFromCurrentAuth(),
+            ['use_shift_gap_date' => true]
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
     }
-
-    $accountant = auth('accountant')->user();
-
-    // إنشاء البيع الآجل
-    $person->creditSales()->create([
-        'store_id'         => $person->store_id,
-        'person_id'        => $person->id,
-        'person_type'      => Employee::class,
-        'amount'           => $request->amount,
-        'remaining_amount' => $request->amount,
-        'partial_payments' => [],
-        'description'      => $description,
-        'date'             => $operationDate->toDateString(),
-        'status'           => 'pending',
-        'month'            => $operationDate->format('Y-m'),
-        'added_by'         => $accountant->id,
-    ]);
-
-    // لوق الموظف
-    EmployeeLogService::add(
-        $person,
-        'credit_sale',
-        "تسجيل بيع آجل بقيمة {$request->amount} ريال",
-        $request->amount,
-        'operation'
-    );
-
-    // 🔥 لوق صاحب المتجر (يظهر في الداشبورد)
-    LogHelper::add(
-        'credit_sale',
-        "قام المحاسب {$accountant->name} بتسجيل بيع آجل بقيمة {$request->amount} ريال على الموظف {$person->name}",
-        $person->store_id
-    );
 
     return back()->with('success', 'تم تسجيل البيع الآجل بنجاح');
 }
+
 
 
     /*
@@ -362,79 +325,28 @@ public function storeCollection(Request $request, $saleId)
     $person = $this->findPerson($id);
     $this->authorizePerson($person);
 
-    $request->validate([
+    $validated = $request->validate([
         'amount'      => 'required|numeric|min:0.01',
         'description' => 'nullable|string|max:255',
         'date'        => 'required|date',
     ]);
 
-    $description = trim($request->description) ?: null;
     $employeeOperationService = app(EmployeeOperationService::class);
-    $operationContext = $employeeOperationService->resolveOperationContext($person->store_id, $request->date, true);
-    $operationDate = $operationContext['operation_date'];
 
-    // منع التكرار خلال نفس اليوم
-    $exists = Debt::where('store_id', $person->store_id)
-        ->where('person_id', $person->id)
-        ->where('amount', $request->amount)
-        ->where('description', $description)
-        ->forOperationDate($operationDate->toDateString())
-        ->exists();
-
-    if ($exists) {
-        return back()->with('error', 'تم تسجيل المديونية مسبقًا بنفس البيانات في تاريخ العملية');
+    try {
+        $employeeOperationService->recordDebt(
+            $person,
+            $validated,
+            $employeeOperationService->actorFromCurrentAuth(),
+            ['use_shift_gap_date' => true, 'notify_store_owner' => true]
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
     }
-
-    $accountant = auth('accountant')->user();
-
-    // إنشاء المديونية
-    $debt = $person->debts()->create([
-        'store_id'    => $person->store_id,
-        'person_id'   => $person->id,
-        'person_type' => Employee::class,
-        'amount'      => $request->amount,
-        'description' => $description,
-        'date'        => $operationDate->toDateString(),
-        'status'      => 'pending',
-        'month'       => $operationDate->format('Y-m'),
-        'added_by'    => $accountant->id,
-    ]);
-
-    // تسجيل لوق للموظف
-    EmployeeLogService::add(
-        $person,
-        'debt',
-        "تسجيل مديونية بقيمة {$request->amount} ريال",
-        $request->amount,
-        'operation'
-    );
-
-    // تسجيل لوق لصاحب المتجر
-LogHelper::add(
-    'employee_debt',
-    "قام المحاسب {$accountant->name} بتسجيل مديونية بقيمة {$request->amount} ريال على الموظف {$person->name}",
-    $person->store_id
-);
-
-
-
-
-    // إشعار لصاحب المتجر
-    Notification::create([
-        'sender_id'    => $accountant->id,
-        'sender_type'  => 'accountant',
-
-        'target_type'  => 'user',
-        'target_ids'   => [$person->store->user->id],
-
-        'title'        => 'تسجيل مديونية',
-        'message'      => "قام المحاسب {$accountant->name} بتسجيل مديونية بقيمة {$request->amount} ريال على الموظف {$person->name}",
-        'template_key' => 'debt_add',
-        'channel'      => 'CARLED',
-    ]);
 
     return back()->with('success', 'تم تسجيل المديونية بنجاح');
 }
+
 
 
 

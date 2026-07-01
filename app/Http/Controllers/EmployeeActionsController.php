@@ -99,61 +99,24 @@ public function storeDebt(Request $request, $id)
     $person = $this->findPerson($id);
     $this->authorizePerson($person);
 
-    $actorName = auth('accountant')->user()?->name ?? auth()->user()?->name ?? 'النظام';
-
-    $request->validate([
+    $validated = $request->validate([
         'amount'      => 'required|numeric|min:0.01',
         'description' => 'nullable|string|max:255',
         'date'        => 'required|date',
     ]);
 
-    // منع تكرار نفس المديونية في نفس اليوم
-    $exists = $person->debts()
-        ->whereDate('date', $request->date)
-        ->where('amount', $request->amount)
-        ->where('description', $request->description)
-        ->exists();
+    $employeeOperationService = app(EmployeeOperationService::class);
 
-    if ($exists) {
-        return back()->withErrors([
-            'duplicate' => 'لا يمكن تكرار نفس المديونية بنفس الوصف والقيمة في نفس اليوم.'
-        ]);
+    try {
+        $employeeOperationService->recordDebt(
+            $person,
+            $validated,
+            $employeeOperationService->actorFromCurrentAuth(),
+            ['notify_store_owner' => auth('accountant')->check()]
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->withErrors(['duplicate' => $exception->getMessage()]);
     }
-
-    $operationDate = \Carbon\Carbon::parse($request->date);
-
-    $debt = $person->debts()->create([
-        'store_id'     => $person->store_id,
-        'amount'       => $request->amount,
-        'description'  => $request->description,
-        'date'         => $request->date,
-        'type'         => 'normal',
-        'status'       => 'pending',
-        'month'        => $operationDate->format('Y-m'),
-        'created_at'   => $operationDate->copy()->setTimeFrom(now()),
-        'added_by'     => auth()->id(),
-    ]);
-
-    EmployeeLogService::add(
-        $person,
-        'debt_add',
-        "إضافة مديونية بقيمة {$request->amount} ريال",
-        $debt->id,
-        'operation'
-    );
-
-    LogHelper::add(
-        'employee_debt',
-        "قام {$actorName} بتسجيل مديونية بقيمة {$request->amount} ريال على الموظف {$person->name}",
-        $person->store_id
-    );
-
-    $this->notifyStoreOwnerForInternalOps(
-        $person,
-        'إضافة مديونية',
-        "قام {$actorName} بإضافة مديونية بقيمة {$request->amount} ريال على {$person->name}.",
-        'debt_add'
-    );
 
     return back()->with('success', 'تم إضافة المديونية بنجاح');
 }
@@ -213,37 +176,21 @@ public function storeCreditSale(Request $request, $employeeId)
         'date'        => 'required|date',
     ]);
 
-    $sale = CreditSale::create([
-        'person_id'        => $person->id,
-        'person_type'      => get_class($person),
-        'store_id'         => $person->store_id,
-        'amount'           => $validated['amount'],
-        'remaining_amount' => $validated['amount'],
-        'description'      => $validated['description'] ?? null,
-        'date'             => $validated['date'],
-        'status'           => 'pending',
-        'month'            => date('Y-m'),
-        'added_by'         => auth()->id(),
-        'partial_payments' => [],
-    ]);
+    $employeeOperationService = app(EmployeeOperationService::class);
 
-    EmployeeLogService::add(
-        $person,
-        'credit_sale_created',
-        "إضافة بيع آجل بقيمة {$sale->amount} ريال",
-        $sale->amount,
-        'operation'
-    );
-
-    $actorName = auth('accountant')->user()?->name ?? auth()->user()?->name ?? 'النظام';
-    LogHelper::add(
-        'credit_sale',
-        "قام {$actorName} بتسجيل بيع آجل بقيمة {$sale->amount} ريال على الموظف {$person->name}",
-        $person->store_id
-    );
+    try {
+        $employeeOperationService->recordCreditSale(
+            $person,
+            $validated,
+            $employeeOperationService->actorFromCurrentAuth()
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->withErrors(['duplicate' => $exception->getMessage()]);
+    }
 
     return back()->with('success', 'تم إنشاء عملية بيع آجل بنجاح');
 }
+
 // دالة التحصيل الكامل
 public function collectCreditSale($employeeId, CreditSale $sale)
 {
