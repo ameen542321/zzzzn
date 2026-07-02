@@ -34,7 +34,6 @@
 @php
     $store = $person->store;
     $owner = $store?->user;
-    $createdByName = $created_by?->name ?? 'النظام';
     $shiftDate = function ($item) {
         return $item->business_date ?? $item->date ?? optional($item->created_at)->format('Y-m-d') ?? '—';
     };
@@ -57,7 +56,7 @@
             <div class="info-title">بيانات المتجر</div>
             <div class="info-line"><span>المتجر:</span> {{ $store->name ?? '—' }}</div>
             <div class="info-line"><span>المالك:</span> {{ $owner->name ?? '—' }}</div>
-            <div class="info-line"><span>تاريخ الإصدار:</span> {{ now()->format('Y-m-d H:i') }}</div>
+            <div class="info-line"><span>تاريخ الإصدار:</span> {{ now()->format('Y-m-d') }}</div>
         </td>
     </tr>
 </table>
@@ -74,7 +73,7 @@
 @if($withdrawals->isNotEmpty())
     <h2>السحوبات</h2>
     <table class="data">
-        <thead><tr><th>#</th><th>المبلغ</th><th>تاريخ الشفت</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
+        <thead><tr><th>#</th><th>المبلغ</th><th>التاريخ</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
         <tbody>
         @foreach($withdrawals as $index => $item)
             <tr>
@@ -92,7 +91,7 @@
 @if($absences->isNotEmpty())
     <h2>الغيابات</h2>
     <table class="data">
-        <thead><tr><th>#</th><th>تاريخ الشفت</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
+        <thead><tr><th>#</th><th>التاريخ</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
         <tbody>
         @foreach($absences as $index => $absence)
             <tr>
@@ -109,7 +108,7 @@
 @if($debts->isNotEmpty())
     <h2>المديونيات والتحصيلات</h2>
     <table class="data">
-        <thead><tr><th>#</th><th>النوع</th><th>المبلغ</th><th>تاريخ الشفت</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
+        <thead><tr><th>#</th><th>النوع</th><th>المبلغ</th><th>التاريخ</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
         <tbody>
         @foreach($debts as $index => $item)
             @php($isCollection = (float) $item->amount < 0)
@@ -129,7 +128,7 @@
 @if($creditSalesPending->isNotEmpty())
     <h2>البيع الآجل غير المحصل</h2>
     <table class="data">
-        <thead><tr><th>#</th><th>القيمة</th><th>المتبقي</th><th>تاريخ الشفت</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
+        <thead><tr><th>#</th><th>القيمة</th><th>المتبقي</th><th>التاريخ</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
         <tbody>
         @foreach($creditSalesPending as $index => $item)
             <tr>
@@ -148,7 +147,7 @@
 @if($creditSalesCollected->isNotEmpty())
     <h2>البيع الآجل المحصل والتحصيلات</h2>
     <table class="data">
-        <thead><tr><th>#</th><th>القيمة</th><th>تاريخ الشفت</th><th>سجّل بواسطة</th><th>التحصيلات</th><th>الملاحظات</th></tr></thead>
+        <thead><tr><th>#</th><th>القيمة</th><th>التاريخ</th><th>سجّل بواسطة</th><th>التحصيلات</th><th>الملاحظات</th></tr></thead>
         <tbody>
         @foreach($creditSalesCollected as $index => $item)
             <tr>
@@ -159,7 +158,7 @@
                 <td>
                     @forelse(collect($item->partial_payments ?? []) as $payment)
                         {{ number_format((float) ($payment['amount'] ?? 0), 2) }} ريال
-                        - {{ isset($payment['date']) ? \Carbon\Carbon::parse($payment['date'])->format('Y-m-d H:i') : '—' }}
+                        - {{ isset($payment['date']) ? \Carbon\Carbon::parse($payment['date'])->format('Y-m-d') : '—' }}
                         - {{ $payment['added_by_name'] ?? 'غير محدد' }}
                         @if(!empty($payment['description'])) ({{ $payment['description'] }}) @endif
                         @if(!$loop->last)<br>@endif
@@ -181,7 +180,8 @@
 @endif
 
 <div class="footer">
-    تم إنشاء التقرير بواسطة: {{ $createdByName }} — جميع التواريخ المعروضة تعتمد تاريخ الشفت/العملية وليس وقت الإدخال.
+    <div>تم إنشاء التقرير بواسطة: CARLED</div>
+    <div style="font-size: 10px; margin-top: 3px;">هذا المستند قابل للمراجعة خلال 10 أيام من تاريخ إصداره.</div>
 </div>
 </body>
 </html>

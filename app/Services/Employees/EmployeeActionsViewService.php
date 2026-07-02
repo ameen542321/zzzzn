@@ -5,6 +5,8 @@ namespace App\Services\Employees;
 use App\Http\Controllers\Employees\EmployeeService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 
 class EmployeeActionsViewService
 {
@@ -22,7 +24,7 @@ class EmployeeActionsViewService
             'operationSummaryCards' => $this->operationSummaryCards($operationSummary),
             'operationDetails' => $operationDetails,
             'actionCards' => $this->actionCards($person, $selectedMonth),
-            'recentLogs' => $this->paginatedLogs($person, $periodStart, $periodEnd),
+            'recentLogs' => $this->paginatedLogs($operationDetails, $periodStart),
             'logActionMap' => $this->logActionMap(),
         ];
     }
@@ -92,6 +94,18 @@ class EmployeeActionsViewService
             ['modal' => 'creditSaleCollectionModal', 'title' => 'تحصيل', 'hint' => 'تحصيل من المديونية', 'icon' => 'fa-sack-dollar', 'accent' => 'emerald', 'type' => 'modal'],
             ['url' => route('user.employees.exportLog', $person->id) . '?month=' . $selectedMonth, 'title' => 'تصدير بيانات الموظف', 'hint' => 'PDF قراءة فقط دون تصفير', 'icon' => 'fa-file-pdf', 'accent' => 'red', 'type' => 'link'],
             ['url' => route('user.employees.edit', $person->id), 'title' => 'تعديل ملف الموظف', 'hint' => 'تحديث بيانات الموظف', 'icon' => 'fa-user-pen', 'accent' => 'indigo', 'type' => 'link'],
+            [
+                'url' => $person->status === 'active' ? route('user.employees.suspend', $person->id) : route('user.employees.activate', $person->id),
+                'title' => 'إيقاف / تفعيل',
+                'hint' => $person->status === 'active' ? 'إيقاف الموظف مؤقتًا' : 'إعادة تفعيل الموظف',
+                'icon' => $person->status === 'active' ? 'fa-user-slash' : 'fa-user-check',
+                'accent' => $person->status === 'active' ? 'orange' : 'emerald',
+                'type' => 'status',
+                'method' => 'PATCH',
+                'confirm' => $person->status === 'active'
+                    ? 'سيتم إيقاف الموظف ماليًا ووظيفيًا، وسيتم إيقاف حساب المحاسب المرتبط إن وجد. هل أنت متأكد؟'
+                    : 'سيتم تفعيل الموظف فقط واستئناف احتساب راتبه من تاريخ التفعيل. هل أنت متأكد؟',
+            ],
         ];
     }
 
@@ -138,13 +152,91 @@ class EmployeeActionsViewService
         ];
     }
 
-    private function paginatedLogs(Model $person, Carbon $periodStart, Carbon $periodEnd)
+    private function paginatedLogs(array $details, Carbon $periodStart): LengthAwarePaginator
     {
-        return $person->logs()
-            ->whereBetween('created_at', [$periodStart, $periodEnd])
-            ->latest()
-            ->paginate(10, ['*'], 'logs_page')
-            ->appends(['month' => $periodStart->format('Y-m')]);
+        $rows = collect()
+            ->merge($this->withdrawalLogRows($details['withdrawals']))
+            ->merge($this->debtLogRows($details['debts']))
+            ->merge($this->creditSaleLogRows($details['credit_sales']))
+            ->merge($this->absenceLogRows($details['absences']))
+            ->sortByDesc(fn ($row) => $row->meta['operation_date'] ?? '')
+            ->values();
+
+        $page = LengthAwarePaginator::resolveCurrentPage('logs_page');
+        $perPage = 10;
+
+        return (new LengthAwarePaginator(
+            $rows->forPage($page, $perPage)->values(),
+            $rows->count(),
+            $perPage,
+            $page,
+            ['pageName' => 'logs_page', 'path' => request()->url()]
+        ))->appends(['month' => $periodStart->format('Y-m')]);
+    }
+
+    private function withdrawalLogRows(Collection $withdrawals): Collection
+    {
+        return $withdrawals->map(fn ($item) => (object) [
+            'action_name' => 'withdrawal',
+            'description' => 'سحب مبلغ ' . number_format((float) $item->amount, 2) . ' ريال',
+            'meta' => $this->rowMeta($item, 'سحب', $item->business_date ?? $item->date),
+        ]);
+    }
+
+    private function debtLogRows(Collection $debts): Collection
+    {
+        return $debts->map(function ($item) {
+            $isCollection = (float) $item->amount < 0;
+
+            return (object) [
+                'action_name' => $isCollection ? 'debt_collect_partial' : 'debt',
+                'description' => ($isCollection ? 'تحصيل مديونية' : 'تسجيل مديونية') . ' بقيمة ' . number_format(abs((float) $item->amount), 2) . ' ريال',
+                'meta' => $this->rowMeta($item, $isCollection ? 'تحصيل مديونية' : 'مديونية', $item->date),
+            ];
+        });
+    }
+
+    private function creditSaleLogRows(Collection $creditSales): Collection
+    {
+        return $creditSales->flatMap(function ($item) {
+            $rows = collect([(object) [
+                'action_name' => 'credit_sale',
+                'description' => 'بيع آجل بقيمة ' . number_format((float) $item->amount, 2) . ' ريال',
+                'meta' => $this->rowMeta($item, 'آجل', $item->date),
+            ]]);
+
+            foreach (($item->partial_payments ?? []) as $payment) {
+                $rows->push((object) [
+                    'action_name' => (($payment['description'] ?? '') === 'تحصيل كامل') ? 'credit_sale_deducted' : 'credit_sale_partial',
+                    'description' => ($payment['description'] ?? 'تحصيل آجل') . ' بقيمة ' . number_format((float) ($payment['amount'] ?? 0), 2) . ' ريال',
+                    'meta' => [
+                        'type' => 'تحصيل آجل',
+                        'actor_name' => $payment['added_by_name'] ?? 'غير محدد',
+                        'operation_date' => isset($payment['date']) ? Carbon::parse($payment['date'])->format('Y-m-d') : null,
+                    ],
+                ]);
+            }
+
+            return $rows;
+        });
+    }
+
+    private function absenceLogRows(Collection $absences): Collection
+    {
+        return $absences->map(fn ($item) => (object) [
+            'action_name' => 'absence',
+            'description' => 'تسجيل غياب',
+            'meta' => $this->rowMeta($item, 'غياب', $item->date),
+        ]);
+    }
+
+    private function rowMeta($item, string $type, $date): array
+    {
+        return [
+            'type' => $type,
+            'actor_name' => $item->addedBy?->name ?? 'غير محدد',
+            'operation_date' => $date ? Carbon::parse($date)->format('Y-m-d') : null,
+        ];
     }
 
     private function normalizeMonth(?string $month): string

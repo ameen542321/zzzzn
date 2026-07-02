@@ -54,7 +54,7 @@
                                                     @foreach($payments as $payment)
                                                         <div class="text-xs text-gray-300">
                                                             {{ number_format((float) ($payment['amount'] ?? 0), 2) }} ريال
-                                                            — {{ isset($payment['date']) ? \Carbon\Carbon::parse($payment['date'])->format('Y-m-d H:i') : '-' }}
+                                                            — {{ isset($payment['date']) ? \Carbon\Carbon::parse($payment['date'])->format('Y-m-d') : '-' }}
                                                             — {{ $payment['added_by_name'] ?? 'غير محدد' }}
                                                             @if(!empty($payment['description']))
                                                                 — {{ $payment['description'] }}

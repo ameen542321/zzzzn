@@ -77,6 +77,12 @@
                 @if(($card['type'] ?? 'modal') === 'link')
                     <a href="{{ $card['url'] }}"
                        class="group text-right bg-gray-800/70 hover:bg-gray-800 text-gray-100 rounded-xl border border-gray-700/80 p-5 transition-all hover:-translate-y-0.5 w-full">
+                @elseif(($card['type'] ?? 'modal') === 'status')
+                    <form action="{{ $card['url'] }}" method="POST" onsubmit="return confirm('{{ $card['confirm'] }}')">
+                        @csrf
+                        @method($card['method'])
+                        <button type="submit"
+                                class="group text-right bg-gray-800/70 hover:bg-gray-800 text-gray-100 rounded-xl border border-gray-700/80 p-5 transition-all hover:-translate-y-0.5 w-full">
                 @else
                     <button type="button"
                             onclick="document.getElementById('{{ $card['modal'] }}').classList.remove('hidden')"
@@ -93,6 +99,9 @@
                     </div>
                 @if(($card['type'] ?? 'modal') === 'link')
                     </a>
+                @elseif(($card['type'] ?? 'modal') === 'status')
+                        </button>
+                    </form>
                 @else
                     </button>
                 @endif
@@ -202,7 +211,7 @@
     'modalId' => 'withdrawalsDetailsModal',
     'title' => 'تفاصيل السحوبات للشهر المحدد',
     'rows' => $operationDetails['withdrawals'],
-    'columns' => ['amount' => 'المبلغ', 'accounting_date' => 'تاريخ الشفت', 'added_by' => 'من أضافها', 'description' => 'الملاحظات'],
+    'columns' => ['amount' => 'المبلغ', 'accounting_date' => 'التاريخ', 'added_by' => 'من أضافها', 'description' => 'الملاحظات'],
 ])
 @include('components.employee.operation-details-modal', [
     'modalId' => 'debtsDetailsModal',
