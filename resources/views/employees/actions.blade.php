@@ -153,6 +153,7 @@
             $meta = is_array($log->meta) ? $log->meta : [];
             $actorName = $meta['actor_name'] ?? $meta['added_by_name'] ?? 'غير محدد';
             $typeLabel = $meta['type'] ?? 'عملية';
+            $logDate = $meta['operation_date'] ?? optional($log->created_at)->format('Y-m-d H:i');
         @endphp
 
         <tr class="text-gray-200 hover:bg-gray-800/40">
@@ -169,7 +170,7 @@
             </td>
             <td class="py-4 px-2 text-gray-300">{{ $actorName }}</td>
             <td class="py-4 px-2 text-gray-400">{{ $typeLabel }}</td>
-            <td class="py-4 px-2 text-gray-500 whitespace-nowrap">{{ optional($log->created_at)->format('Y-m-d H:i') }}</td>
+            <td class="py-4 px-2 text-gray-500 whitespace-nowrap">{{ $logDate }}</td>
         </tr>
 
     @empty
@@ -201,7 +202,7 @@
     'modalId' => 'withdrawalsDetailsModal',
     'title' => 'تفاصيل السحوبات للشهر المحدد',
     'rows' => $operationDetails['withdrawals'],
-    'columns' => ['amount' => 'المبلغ', 'date' => 'التاريخ', 'added_by' => 'من أضافها', 'description' => 'الملاحظات'],
+    'columns' => ['amount' => 'المبلغ', 'accounting_date' => 'تاريخ الشفت', 'added_by' => 'من أضافها', 'description' => 'الملاحظات'],
 ])
 @include('components.employee.operation-details-modal', [
     'modalId' => 'debtsDetailsModal',

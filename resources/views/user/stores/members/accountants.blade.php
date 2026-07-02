@@ -50,11 +50,7 @@
                     {{-- منطقة العمليات للكمبيوتر (كاملة 100%) --}}
                     <tr x-show="openRow === {{ $acc->id }}" x-cloak x-transition>
                         <td colspan="5" class="p-8 bg-black/40 shadow-inner">
-                            <div class="grid grid-cols-8 gap-4">
-                                {{-- تفاصيل --}}
-                                <button @click="activeModal = 'details-{{ $acc->id }}'" class="action-btn border-gray-700 bg-gray-800 hover:text-blue-400">
-                                    <i class="fa-solid fa-circle-info"></i><span>تفاصيل</span>
-                                </button>
+                            <div class="grid grid-cols-7 gap-4">
                                 {{-- سحب --}}
                                 <button @click="activeModal = 'withdrawal-{{ $acc->id }}'" class="action-btn border-emerald-900/30 bg-emerald-900/10 text-emerald-500 hover:bg-emerald-600 hover:text-white">
                                     <i class="fa-solid fa-money-bill-transfer"></i><span>سحب</span>
@@ -132,12 +128,6 @@
                 {{-- قائمة العمليات كاملة للجوال --}}
                 <div x-show="openRow === {{ $acc->id }}" x-collapse x-cloak class="bg-[#111318]/60 px-4 pb-6 pt-2 border-t border-gray-800/50">
                     <div class="grid grid-cols-1 gap-2.5 mt-2">
-                        {{-- تفاصيل --}}
-                        <button @click="activeModal = 'details-{{ $acc->id }}'" class="mod-list-item group">
-                            <div class="mod-icon-box bg-blue-500/10 text-blue-400 group-active:bg-blue-500 group-active:text-white"><i class="fa-solid fa-user-gear"></i></div>
-                            <span class="flex-1 text-right text-gray-300 font-bold text-xs uppercase mr-5">عرض ملف المحاسب</span>
-                            <i class="fa-solid fa-angle-left text-gray-800 text-[10px]"></i>
-                        </button>
                         {{-- سحب --}}
                         <button @click="activeModal = 'withdrawal-{{ $acc->id }}'" class="mod-list-item group">
                             <div class="mod-icon-box bg-emerald-500/10 text-emerald-400 group-active:bg-emerald-500 group-active:text-white"><i class="fa-solid fa-money-bill-transfer"></i></div>
@@ -197,9 +187,6 @@
         @foreach ($accountants as $acc)
         <template x-teleport="body">
             <div x-show="activeModal && activeModal.includes('-{{ $acc->id }}')" x-cloak>
-                <template x-if="activeModal === 'details-{{ $acc->id }}'">
-                    @include('components.employee.details-modal', ['employee' => $acc->employee, 'modalId' => 'employeeDetailsModal-'.$acc->id, 'type' => 'المحاسب'])
-                </template>
                 <template x-if="activeModal === 'withdrawal-{{ $acc->id }}'">
                     @include('components.employee.withdrawal-form', ['employee' => $acc->employee, 'modalId' => 'withdrawalModal-'.$acc->id])
                 </template>
@@ -220,7 +207,6 @@
                     if(v && v.includes('-{{ $acc->id }}')) {
                         setTimeout(() => {
                             const mapping = {
-                                'details-{{ $acc->id }}': 'employeeDetailsModal-{{ $acc->id }}',
                                 'withdrawal-{{ $acc->id }}': 'withdrawalModal-{{ $acc->id }}',
                                 'absence-{{ $acc->id }}': 'absenceModal-{{ $acc->id }}',
                                 'debt-{{ $acc->id }}': 'debtModal-{{ $acc->id }}',

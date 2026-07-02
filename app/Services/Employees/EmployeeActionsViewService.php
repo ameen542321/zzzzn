@@ -21,7 +21,7 @@ class EmployeeActionsViewService
             'selectedMonth' => $selectedMonth,
             'operationSummaryCards' => $this->operationSummaryCards($operationSummary),
             'operationDetails' => $operationDetails,
-            'actionCards' => $this->actionCards($person),
+            'actionCards' => $this->actionCards($person, $selectedMonth),
             'recentLogs' => $this->paginatedLogs($person, $periodStart, $periodEnd),
             'logActionMap' => $this->logActionMap(),
         ];
@@ -82,7 +82,7 @@ class EmployeeActionsViewService
         ];
     }
 
-    public function actionCards(Model $person): array
+    public function actionCards(Model $person, string $selectedMonth): array
     {
         return [
             ['modal' => 'withdrawalModal', 'title' => 'سحب', 'hint' => 'تسجيل عملية سحب', 'icon' => 'fa-money-bill-transfer', 'accent' => 'sky', 'type' => 'modal'],
@@ -90,7 +90,7 @@ class EmployeeActionsViewService
             ['modal' => 'debtModal', 'title' => 'مديونية', 'hint' => 'تسجيل مديونية', 'icon' => 'fa-hand-holding-dollar', 'accent' => 'rose', 'type' => 'modal'],
             ['modal' => 'creditSaleModal', 'title' => 'بيع آجل', 'hint' => 'إنشاء عملية بيع آجل', 'icon' => 'fa-cart-shopping', 'accent' => 'violet', 'type' => 'modal'],
             ['modal' => 'creditSaleCollectionModal', 'title' => 'تحصيل', 'hint' => 'تحصيل من المديونية', 'icon' => 'fa-sack-dollar', 'accent' => 'emerald', 'type' => 'modal'],
-            ['url' => route('user.employees.exportLog', $person->id), 'title' => 'تصدير بيانات الموظف', 'hint' => 'PDF قراءة فقط دون تصفير', 'icon' => 'fa-file-pdf', 'accent' => 'red', 'type' => 'link'],
+            ['url' => route('user.employees.exportLog', $person->id) . '?month=' . $selectedMonth, 'title' => 'تصدير بيانات الموظف', 'hint' => 'PDF قراءة فقط دون تصفير', 'icon' => 'fa-file-pdf', 'accent' => 'red', 'type' => 'link'],
             ['url' => route('user.employees.edit', $person->id), 'title' => 'تعديل ملف الموظف', 'hint' => 'تحديث بيانات الموظف', 'icon' => 'fa-user-pen', 'accent' => 'indigo', 'type' => 'link'],
         ];
     }

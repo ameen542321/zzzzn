@@ -39,25 +39,26 @@ class EmployeeReports
         // جلب الموظف أو المحاسب
         $person = $self->findPerson($id);
 
-        // الشهر المستهدف:
-        // - إذا كان التصدير يوم 1 أو 2 أو 3: نعتمد الشهر السابق.
-        // - فيما عدا ذلك: نعتمد الشهر الحالي.
-        $reportMonth = Carbon::now()->day <= 3
-            ? Carbon::now()->subMonthNoOverflow()
-            : Carbon::now();
+        $person->loadMissing('store.user');
+
+        // الشهر المستهدف يأتي من فلتر صفحة العمليات، مع fallback محافظ للسلوك القديم.
+        $requestedMonth = request()->query('month');
+        $reportMonth = preg_match('/^\d{4}-\d{2}$/', (string) $requestedMonth) === 1
+            ? Carbon::createFromFormat('Y-m-d', $requestedMonth . '-01')
+            : (Carbon::now()->day <= 3 ? Carbon::now()->subMonthNoOverflow() : Carbon::now());
         $reportMonthKey = $reportMonth->format('Y-m');
         $monthStart = $reportMonth->copy()->startOfMonth()->toDateString();
         $monthEnd = $reportMonth->copy()->endOfMonth()->toDateString();
+        $periodStart = Carbon::parse($monthStart)->startOfDay();
+        $periodEnd = Carbon::parse($monthEnd)->endOfDay();
 
         // حسابات المديونية
         $remainingDebt = $person->debts()->sum('amount');
 
-        // نعتمد على التاريخ الفعلي للعملية (date) مع fallback على month لضمان عدم ضياع السجلات القديمة
+        // نعتمد على تاريخ العملية/الشفت، وليس تاريخ الإدخال، مع fallback موحد للسجلات القديمة.
         $debtOperations = $person->debts()
-            ->where(function ($query) use ($monthStart, $monthEnd, $reportMonthKey) {
-                $query->whereBetween('date', [$monthStart, $monthEnd])
-                    ->orWhere('month', $reportMonthKey);
-            })
+            ->with('addedBy')
+            ->betweenOperationDates($monthStart, $monthEnd)
             ->orderBy('date')
             ->get();
 
@@ -65,24 +66,18 @@ class EmployeeReports
         $addedThisMonth = $debtOperations->where('amount', '>', 0)->sum('amount');
 
         $withdrawals = $person->withdrawals()
-            ->where(function ($query) use ($monthStart, $monthEnd, $reportMonthKey) {
-                $query->whereBetween('date', [$monthStart, $monthEnd])
-                    ->orWhere('month', $reportMonthKey);
-            })
+            ->with('addedBy')
+            ->betweenAccountingDates($periodStart, $periodEnd)
+            ->orderBy('business_date')
             ->orderBy('date')
             ->get();
 
         $absences = $person->absences()
-            ->where(function ($query) use ($monthStart, $monthEnd, $reportMonthKey) {
-                $query->whereBetween('date', [$monthStart, $monthEnd])
-                    ->orWhere('month', $reportMonthKey);
-            })
             ->with('addedBy')
+            ->betweenOperationDates($monthStart, $monthEnd)
             ->orderBy('date')
             ->get();
 
-        $periodStart = Carbon::parse($monthStart)->startOfDay();
-        $periodEnd = Carbon::parse($monthEnd)->endOfDay();
         $salaryInfo = $person instanceof Employee
             ? EmployeeService::calculateProratedSalaryForEmployee($person, $periodStart, $periodEnd)
             : [
@@ -94,11 +89,10 @@ class EmployeeReports
         $salaryNet = max(0, (float) $salaryInfo['payable_salary'] - (float) $withdrawals->sum('amount') - $absencePenalty);
 
         $creditSalesPending = $person->creditSales()
-            ->where(function ($query) use ($monthStart, $monthEnd, $reportMonthKey) {
-                $query->whereBetween('date', [$monthStart, $monthEnd])
-                    ->orWhere('month', $reportMonthKey);
-            })
+            ->with('addedBy')
+            ->betweenOperationDates($monthStart, $monthEnd)
             ->where('status', 'pending')
+            ->orderBy('date')
             ->get();
 
         $creditSalesCollected = $person->creditSales()
@@ -108,7 +102,16 @@ class EmployeeReports
                     ->orWhereBetween('date', [$monthStart, $monthEnd]);
             })
             ->with('addedBy')
+            ->orderBy('date')
             ->get();
+
+        $emptySections = collect([
+            'السحوبات' => $withdrawals->isEmpty(),
+            'الغيابات' => $absences->isEmpty(),
+            'المديونيات والتحصيلات' => $debtOperations->isEmpty(),
+            'البيع الآجل غير المحصل' => $creditSalesPending->isEmpty(),
+            'البيع الآجل المحصل' => $creditSalesCollected->isEmpty(),
+        ])->filter()->keys()->values();
 
         // تجهيز البيانات للعرض داخل الـ PDF
         $data = [
@@ -127,6 +130,7 @@ class EmployeeReports
             'collectedThisMonth'   => abs($collectedThisMonth), // التحصيل الشهري (موجب)
             'creditSalesPending'   => $creditSalesPending,
             'creditSalesCollected' => $creditSalesCollected,
+            'emptySections'        => $emptySections,
             'created_by'           => auth()->user(),
         ];
 

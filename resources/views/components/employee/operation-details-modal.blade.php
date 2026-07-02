@@ -37,6 +37,10 @@
                                             {{ optional($row->date)->format('Y-m-d') ?? $row->date ?? optional($row->created_at)->format('Y-m-d') ?? '-' }}
                                             @break
 
+                                        @case('accounting_date')
+                                            {{ $row->business_date ?? optional($row->date)->format('Y-m-d') ?? $row->date ?? optional($row->created_at)->format('Y-m-d') ?? '-' }}
+                                            @break
+
                                         @case('added_by')
                                             {{ $row->addedBy?->name ?? 'غير محدد' }}
                                             @break

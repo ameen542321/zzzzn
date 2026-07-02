@@ -53,7 +53,7 @@ class EmployeeOperationService
             'withdrawal',
             "سحب مبلغ {$data['amount']} ريال",
             $data['amount'],
-            $this->operationLogMeta($actor, 'operation')
+            $this->operationLogMeta($actor, 'operation', $shiftContext['business_date'] ?? $operationDate->toDateString())
         );
 
         LogHelper::add(
@@ -96,7 +96,7 @@ class EmployeeOperationService
             'absence',
             "تسجيل غياب بتاريخ {$operationDate->toDateString()}",
             null,
-            $this->operationLogMeta($actor, 'operation')
+            $this->operationLogMeta($actor, 'operation', $operationDate->toDateString())
         );
 
         LogHelper::add(
@@ -159,7 +159,7 @@ class EmployeeOperationService
             'debt',
             "تسجيل مديونية بقيمة {$data['amount']} ريال",
             $data['amount'],
-            $this->operationLogMeta($actor, 'operation')
+            $this->operationLogMeta($actor, 'operation', $operationDate->toDateString())
         );
 
         LogHelper::add(
@@ -216,7 +216,7 @@ class EmployeeOperationService
             'credit_sale',
             "تسجيل بيع آجل بقيمة {$data['amount']} ريال",
             $data['amount'],
-            $this->operationLogMeta($actor, 'operation')
+            $this->operationLogMeta($actor, 'operation', $operationDate->toDateString())
         );
 
         LogHelper::add(
@@ -285,7 +285,7 @@ class EmployeeOperationService
             $actionName,
             "{$description} بقيمة {$amount} ريال",
             $amount,
-            $this->operationLogMeta($actor, 'operation')
+            $this->operationLogMeta($actor, 'operation', $operationDate->toDateString())
         );
 
         LogHelper::add(
@@ -316,11 +316,17 @@ class EmployeeOperationService
             throw EmployeeOperationException::duplicate('مبلغ التحصيل غير صالح.');
         }
 
+        $operationContext = $this->resolveOperationContext(
+            $person->store_id,
+            $options['date'] ?? now()->toDateString(),
+            (bool) ($options['use_shift_gap_date'] ?? false)
+        );
+        $operationDate = $operationContext['operation_date'];
         $remainingAmount = max(0, (float) $creditSale->remaining_amount - $amount);
         $payments = $creditSale->partial_payments ?? [];
         $payments[] = [
             'amount' => $amount,
-            'date' => now()->toDateTimeString(),
+            'date' => $operationDate->toDateString(),
             'added_by' => $actor['id'] ?? null,
             'added_by_name' => $actor['name'] ?? null,
             'description' => $remainingAmount == 0 ? 'تحصيل كامل' : 'تحصيل جزئي',
@@ -339,7 +345,7 @@ class EmployeeOperationService
             $actionName,
             ($remainingAmount == 0 ? 'تحصيل كامل بيع آجل' : 'تحصيل جزئي من بيع آجل') . " بقيمة {$amount} ريال",
             $amount,
-            $this->operationLogMeta($actor, 'operation')
+            $this->operationLogMeta($actor, 'operation', $operationDate->toDateString())
         );
 
         LogHelper::add(
@@ -392,13 +398,14 @@ class EmployeeOperationService
         ]);
     }
 
-    private function operationLogMeta(array $actor, string $type): array
+    private function operationLogMeta(array $actor, string $type, ?string $operationDate = null): array
     {
         return [
             'type' => $type,
             'actor_id' => $actor['id'] ?? null,
             'actor_type' => $actor['type'] ?? null,
             'actor_name' => $actor['name'] ?? 'النظام',
+            'operation_date' => $operationDate,
         ];
     }
 
