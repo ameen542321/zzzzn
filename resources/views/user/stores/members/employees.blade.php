@@ -59,8 +59,7 @@
                     {{-- منطقة العمليات للكمبيوتر --}}
                     <tr x-show="openRow === {{ $emp->id }}" x-cloak x-transition>
                         <td colspan="4" class="p-8 bg-black/40 shadow-inner">
-                            <div class="grid grid-cols-8 gap-4">
-                                <button @click="activeModal = 'details-{{ $emp->id }}'" class="action-btn border-gray-700 bg-gray-800 hover:text-blue-400"><i class="fa-solid fa-info-circle"></i><span>تفاصيل</span></button>
+                            <div class="grid grid-cols-7 gap-4">
                                 <button @click="activeModal = 'withdrawal-{{ $emp->id }}'" class="action-btn border-emerald-900/30 bg-emerald-900/10 text-emerald-500 hover:bg-emerald-600 hover:text-white"><i class="fa-solid fa-money-bill-transfer"></i><span>سحب</span></button>
                                 <button @click="activeModal = 'absence-{{ $emp->id }}'" class="action-btn border-amber-900/30 bg-amber-900/10 text-amber-500 hover:bg-amber-600 hover:text-white"><i class="fa-solid fa-user-clock"></i><span>غياب</span></button>
                                 <button @click="activeModal = 'debt-{{ $emp->id }}'" class="action-btn border-rose-900/30 bg-rose-900/10 text-rose-500 hover:bg-rose-600 hover:text-white"><i class="fa-solid fa-receipt"></i><span>دين</span></button>
@@ -143,11 +142,6 @@
                 {{-- منطقة الخيارات للجوال --}}
                 <div x-show="openRow === {{ $emp->id }}" x-collapse x-cloak class="bg-[#111318]/40 px-3 pb-5 pt-1 border-t border-gray-800/50">
                     <div class="grid grid-cols-1 gap-2 mt-2">
-                        <button @click="activeModal = 'details-{{ $emp->id }}'" class="mod-list-item group">
-                            <div class="mod-icon-box bg-blue-500/10 text-blue-500"><i class="fa-solid fa-id-badge"></i></div>
-                            <span class="flex-1 text-right text-gray-300 font-bold text-xs uppercase mr-4">ملف الموظف الكامل</span>
-                            <i class="fa-solid fa-chevron-left text-gray-800 text-[9px] ml-1"></i>
-                        </button>
                         <button @click="activeModal = 'withdrawal-{{ $emp->id }}'" class="mod-list-item group">
                             <div class="mod-icon-box bg-emerald-500/10 text-emerald-500"><i class="fa-solid fa-money-bill-transfer"></i></div>
                             <span class="flex-1 text-right text-gray-300 font-bold text-xs uppercase mr-4">تسجيل سلفة أو سحب</span>
@@ -217,9 +211,6 @@
         @foreach ($employees as $emp)
         <template x-teleport="body">
             <div x-show="activeModal && activeModal.includes('-{{ $emp->id }}')" x-cloak>
-                <template x-if="activeModal === 'details-{{ $emp->id }}'">
-                    @include('components.employee.details-modal', ['employee' => $emp, 'modalId' => 'employeeDetailsModal-'.$emp->id, 'type' => 'الموظف'])
-                </template>
                 <template x-if="activeModal === 'withdrawal-{{ $emp->id }}'">
                     @include('components.employee.withdrawal-form', ['employee' => $emp, 'modalId' => 'withdrawalModal-'.$emp->id])
                 </template>
@@ -240,7 +231,6 @@
                     if(v && v.includes('-{{ $emp->id }}')) {
                         setTimeout(() => {
                             const mapping = {
-                                'details-{{ $emp->id }}': 'employeeDetailsModal-{{ $emp->id }}',
                                 'withdrawal-{{ $emp->id }}': 'withdrawalModal-{{ $emp->id }}',
                                 'absence-{{ $emp->id }}': 'absenceModal-{{ $emp->id }}',
                                 'debt-{{ $emp->id }}': 'debtModal-{{ $emp->id }}',

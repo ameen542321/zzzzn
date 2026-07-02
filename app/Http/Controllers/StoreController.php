@@ -23,6 +23,7 @@ use App\Services\Shifts\ShiftGapInfoService;
 use App\Services\Shifts\ShiftGapRequestService;
 use App\Services\Shifts\ShiftGapOverviewService;
 use App\Services\Shifts\ShiftSettingsHistoryService;
+use App\Services\Shifts\ShiftOperationBinderService;
 use App\Services\Reports\MonthlyStoreReportService;
 use App\Services\Reports\ComprehensiveStoreSearchReportService;
 use App\Services\Reports\RecentReportFilesService;
@@ -537,28 +538,19 @@ class StoreController extends Controller
             if (($operationCounts['sales_count'] + $operationCounts['expenses_count'] + $operationCounts['withdrawals_count']) > 0) {
                 // إغلاق المالك يعتمد بيانات اليوم المحدد سواء كان فارغًا أو يحتوي عمليات، ولا يوجد إغلاق آلي بدون طلب المالك.
                 $salesQuery = Sale::where('store_id', $store->id)
-                    ->where(function ($query) use ($date) {
-                        $query->whereDate('business_date', $date)
-                            ->orWhere(function ($legacyQuery) use ($date) {
-                                $legacyQuery->whereNull('business_date')
-                                    ->whereDate('created_at', $date);
-                            });
-                    })
+                    ->forAccountingDate($date)
                     ->whereNull('daily_balance_id')
-                    ->where(function ($query) {
-                        $query->whereNull('description')
-                            ->orWhere('description', '!=', 'manual_invoice_entry');
-                    });
+                    ->excludeManualInvoiceEntries();
 
                 $totalSales = (float) (clone $salesQuery)->sum('paid_amount');
                 $cashSales = (float) (clone $salesQuery)->where('sale_type', 'cash')->sum('paid_amount')
                     + (float) (clone $salesQuery)->where('sale_type', 'mixed')->sum('cash_amount');
                 $expenses = (float) Expense::where('store_id', $store->id)
-                    ->whereDate('business_date', $date)
+                    ->forAccountingDate($date)
                     ->whereNull('daily_balance_id')
                     ->sum('amount');
                 $withdrawals = (float) Withdrawal::where('store_id', $store->id)
-                    ->whereDate('business_date', $date)
+                    ->forAccountingDate($date)
                     ->whereNull('daily_balance_id')
                     ->sum('amount');
                 $expectedCash = $cashSales - $expenses - $withdrawals;
@@ -580,38 +572,12 @@ class StoreController extends Controller
                     'notes' => 'إغلاق مالك لشفت يحتوي عمليات بدون تقرير PDF: ' . auth()->user()->name,
                 ]);
 
-                Sale::where('store_id', $store->id)
-                    ->where(function ($query) use ($date) {
-                        $query->whereDate('business_date', $date)
-                            ->orWhere(function ($legacyQuery) use ($date) {
-                                $legacyQuery->whereNull('business_date')
-                                    ->whereDate('created_at', $date);
-                            });
-                    })
-                    ->whereNull('daily_balance_id')
-                    ->update(['business_date' => $date, 'daily_balance_id' => $dailyBalance->id]);
-
-                Expense::where('store_id', $store->id)
-                    ->where(function ($query) use ($date) {
-                        $query->whereDate('business_date', $date)
-                            ->orWhere(function ($legacyQuery) use ($date) {
-                                $legacyQuery->whereNull('business_date')
-                                    ->whereDate('created_at', $date);
-                            });
-                    })
-                    ->whereNull('daily_balance_id')
-                    ->update(['business_date' => $date, 'daily_balance_id' => $dailyBalance->id]);
-
-                Withdrawal::where('store_id', $store->id)
-                    ->where(function ($query) use ($date) {
-                        $query->whereDate('business_date', $date)
-                            ->orWhere(function ($legacyQuery) use ($date) {
-                                $legacyQuery->whereNull('business_date')
-                                    ->whereDate('created_at', $date);
-                            });
-                    })
-                    ->whereNull('daily_balance_id')
-                    ->update(['business_date' => $date, 'daily_balance_id' => $dailyBalance->id]);
+                app(ShiftOperationBinderService::class)->attachByBusinessDate(
+                    $dailyBalance,
+                    $date,
+                    includeLegacyCreatedAtDate: true,
+                    excludeManualInvoiceEntries: true
+                );
 
                 app(LogService::class)->add(
                     'shift_gap_owner_closed_with_operations',
@@ -720,44 +686,7 @@ class StoreController extends Controller
                 'notes' => trim(($balance->notes ? $balance->notes . "\n" : '') . 'نقل تاريخ الشفت من ' . ($sourceDate ?: 'غير محدد') . ' إلى ' . $targetDate . ' بواسطة المالك: ' . auth()->user()->name),
             ]);
 
-            Sale::where('daily_balance_id', $balance->id)->update(['business_date' => $targetDate]);
-            Expense::where('daily_balance_id', $balance->id)->update(['business_date' => $targetDate]);
-            Withdrawal::where('daily_balance_id', $balance->id)->update([
-                'business_date' => $targetDate,
-                'date' => $targetDate,
-                'month' => \Carbon\Carbon::parse($targetDate)->format('Y-m'),
-            ]);
-
-            $start = $balance->start_time ? \Carbon\Carbon::parse($balance->start_time) : null;
-            $end = $balance->end_time ? \Carbon\Carbon::parse($balance->end_time) : null;
-
-            if ($start && $end) {
-                Sale::where('store_id', $balance->store_id)
-                    ->whereNull('daily_balance_id')
-                    ->whereBetween('created_at', [$start, $end])
-                    ->update(['business_date' => $targetDate, 'daily_balance_id' => $balance->id]);
-
-                Expense::where('store_id', $balance->store_id)
-                    ->whereNull('daily_balance_id')
-                    ->whereBetween('created_at', [$start, $end])
-                    ->update(['business_date' => $targetDate, 'daily_balance_id' => $balance->id]);
-
-                Withdrawal::where('store_id', $balance->store_id)
-                    ->whereNull('daily_balance_id')
-                    ->where(function ($query) use ($start, $end, $sourceDate) {
-                        $query->whereBetween('created_at', [$start, $end]);
-
-                        if ($sourceDate) {
-                            $query->orWhereDate('date', $sourceDate);
-                        }
-                    })
-                    ->update([
-                        'business_date' => $targetDate,
-                        'daily_balance_id' => $balance->id,
-                        'date' => $targetDate,
-                        'month' => \Carbon\Carbon::parse($targetDate)->format('Y-m'),
-                    ]);
-            }
+            app(ShiftOperationBinderService::class)->moveBalanceOperations($balance, $targetDate, $sourceDate);
 
             app(LogService::class)->add(
                 'shift_business_date_moved',

@@ -2,50 +2,62 @@
 
 namespace App\Http\Controllers\Financial;
 
-use Carbon\Carbon;
-use App\Models\Sale;
-use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Controller;
+use App\Models\Sale;
+use App\Services\Accounting\FinancialSummaryService;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class FinancialController extends Controller
 {
-    private function excludeManualInvoiceEntries($query)
-    {
-        return $query->where(function ($q) {
-            $q->whereNull('description')
-                ->orWhere('description', '!=', 'manual_invoice_entry');
-        });
-    }
+    private const COLLECTED_SALE_TYPES = ['cash', 'card', 'credit', 'mixed'];
 
     /**
      * لوحة التحكم المالية (إحصائيات عامة)
      */
     public function index()
-{
-    // جلب متاجري فقط (الأمان)
-    $storeIds = auth()->user()->stores->pluck('id');
-    $query = $this->excludeManualInvoiceEntries(
-        Sale::whereIn('store_id', $storeIds)
-    );
+    {
+        $storeIds = auth()->user()->stores->pluck('id');
+        $periodStart = Carbon::create(1970, 1, 1)->startOfDay();
+        $periodEnd = now()->endOfDay();
 
-    // حساب المبيعات مباشرة من قاعدة البيانات (السرعة)
-    $totalSales = (clone $query)->sum('paid_amount');
+        $financialSummaryService = app(FinancialSummaryService::class);
+        $financialTotals = $financialSummaryService->storeSummariesForPeriod(
+            $storeIds,
+            $periodStart,
+            $periodEnd,
+            self::COLLECTED_SALE_TYPES
+        )->totals();
 
-    $salesByType = (clone $query)->selectRaw('sale_type, SUM(paid_amount) as total')
-                                 ->groupBy('sale_type')
-                                 ->pluck('total', 'sale_type');
+        $todayFinancialTotals = $financialSummaryService->storeSummariesForPeriod(
+            $storeIds,
+            today(),
+            today(),
+            self::COLLECTED_SALE_TYPES
+        )->totals();
 
-    // مبيعات اليوم باستخدام index قاعدة البيانات
-    $todaySales = (clone $query)->whereDate('created_at', Carbon::today())->sum('paid_amount');
+        $totalSales = $financialTotals->sales;
+        $todaySales = $todayFinancialTotals->sales;
+        $totalCost = $financialTotals->productsCost;
+        $profit = $totalSales - $totalCost;
 
-    // ملاحظة: التكلفة والربح يجب أن تكون أعمدة في الجدول لتجنب الـ Loops
-    $totalCost = (clone $query)->sum('total_cost_at_sale');
-    $profit = $totalSales - $totalCost;
+        $salesByType = Sale::query()
+            ->whereIn('store_id', $storeIds)
+            ->whereIn('sale_type', self::COLLECTED_SALE_TYPES)
+            ->excludeManualInvoiceEntries()
+            ->betweenAccountingDates($periodStart, $periodEnd)
+            ->selectRaw('sale_type, COALESCE(SUM(paid_amount), 0) as total')
+            ->groupBy('sale_type')
+            ->pluck('total', 'sale_type');
 
-    return view('financial.index', compact(
-        'totalSales', 'todaySales', 'totalCost', 'profit', 'salesByType'
-    ));
-}
+        return view('financial.index', compact(
+            'totalSales',
+            'todaySales',
+            'totalCost',
+            'profit',
+            'salesByType'
+        ));
+    }
 
     /**
      * تقرير حسب التاريخ
@@ -53,16 +65,21 @@ class FinancialController extends Controller
     public function reportByDate($from, $to)
     {
         $storeIds = auth()->user()->stores->pluck('id');
-        $sales = $this->excludeManualInvoiceEntries(
-            Sale::whereIn('store_id', $storeIds)
-                ->whereBetween('created_at', [$from, $to])
-        )->get();
+
+        $totalsByType = Sale::query()
+            ->whereIn('store_id', $storeIds)
+            ->whereIn('sale_type', self::COLLECTED_SALE_TYPES)
+            ->excludeManualInvoiceEntries()
+            ->betweenAccountingDates($from, $to)
+            ->selectRaw('sale_type, COALESCE(SUM(paid_amount), 0) as total')
+            ->groupBy('sale_type')
+            ->pluck('total', 'sale_type');
 
         return response()->json([
-            'total'  => $sales->sum('paid_amount'),
-            'cash'   => $sales->where('sale_type', 'cash')->sum('paid_amount'),
-            'card'   => $sales->where('sale_type', 'card')->sum('paid_amount'),
-            'credit' => $sales->where('sale_type', 'credit')->sum('paid_amount'),
+            'total' => (float) $totalsByType->sum(),
+            'cash' => (float) ($totalsByType['cash'] ?? 0),
+            'card' => (float) ($totalsByType['card'] ?? 0),
+            'credit' => (float) ($totalsByType['credit'] ?? 0),
         ]);
     }
 
@@ -72,23 +89,15 @@ class FinancialController extends Controller
     public function profitLoss()
     {
         $storeIds = auth()->user()->stores->pluck('id');
-        $sales = $this->excludeManualInvoiceEntries(
-            Sale::whereIn('store_id', $storeIds)
-        )->get();
+        $financialTotals = app(FinancialSummaryService::class)->storeSummariesForPeriod(
+            $storeIds,
+            Carbon::create(1970, 1, 1)->startOfDay(),
+            now()->endOfDay(),
+            self::COLLECTED_SALE_TYPES
+        )->totals();
 
-        $totalSales = $sales->sum('paid_amount');
-
-        $totalCost = $sales->sum(function ($sale) {
-            $items = json_decode($sale->items, true);
-            $cost = 0;
-
-            foreach ($items as $item) {
-                $cost += ($item['cost'] ?? 0) * $item['quantity'];
-            }
-
-            return $cost;
-        });
-
+        $totalSales = $financialTotals->sales;
+        $totalCost = $financialTotals->productsCost;
         $profit = $totalSales - $totalCost;
 
         return view('financial.profit-loss', compact(
@@ -101,23 +110,24 @@ class FinancialController extends Controller
     /**
      * أعلى المنتجات مبيعًا
      */
-   public function topProducts()
-{
-    $storeIds = auth()->user()->stores->pluck('id');
+    public function topProducts()
+    {
+        $storeIds = auth()->user()->stores->pluck('id');
 
-    $topProducts = DB::table('sale_items')
-        ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
-        ->whereIn('sales.store_id', $storeIds)
-        ->where(function ($q) {
-            $q->whereNull('sales.description')
-                ->orWhere('sales.description', '!=', 'manual_invoice_entry');
-        })
-        ->select('sale_items.product_id', DB::raw('SUM(sale_items.quantity) as total_qty'))
-        ->groupBy('sale_items.product_id')
-        ->orderByDesc('total_qty')
-        ->take(10) // أفضل 10 منتجات
-        ->get();
+        $topProducts = DB::table('sale_items')
+            ->join('sales', 'sales.id', '=', 'sale_items.sale_id')
+            ->whereIn('sales.store_id', $storeIds)
+            ->whereIn('sales.sale_type', self::COLLECTED_SALE_TYPES)
+            ->where(function ($q) {
+                $q->whereNull('sales.description')
+                    ->orWhere('sales.description', '!=', 'manual_invoice_entry');
+            })
+            ->select('sale_items.product_id', DB::raw('SUM(sale_items.quantity) as total_qty'))
+            ->groupBy('sale_items.product_id')
+            ->orderByDesc('total_qty')
+            ->take(10)
+            ->get();
 
-    return response()->json($topProducts);
-}
+        return response()->json($topProducts);
+    }
 }

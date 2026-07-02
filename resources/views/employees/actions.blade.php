@@ -39,43 +39,55 @@
 
 </div>
 
+    <form method="GET" action="{{ url()->current() }}" class="mb-6 rounded-2xl border border-gray-800 bg-gray-900/70 p-4 flex flex-col sm:flex-row gap-3 sm:items-end">
+        <input type="hidden" name="return_to" value="{{ $returnTo ?? request('return_to') }}">
+        <div>
+            <label class="block text-xs text-gray-400 mb-2">فلترة الشهر</label>
+            <input type="month" name="month" value="{{ $selectedMonth }}"
+                   class="bg-gray-800 border border-gray-700 text-gray-100 rounded-lg px-3 py-2">
+        </div>
+        <button class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg">تطبيق</button>
+    </form>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-8">
+        @foreach($operationSummaryCards as $summaryCard)
+            <button type="button"
+                    onclick="document.getElementById('{{ $summaryCard['modal'] }}').classList.remove('hidden')"
+                    class="text-right rounded-2xl border border-gray-800 bg-gray-900/70 p-4 shadow-lg hover:bg-gray-800/80 transition">
+                <p class="text-xs text-gray-500 mb-2">{{ $summaryCard['label'] }}</p>
+                <div class="flex items-end gap-1">
+                    <span class="text-2xl font-black {{ $summaryCard['color'] }}">{{ $summaryCard['value'] }}</span>
+                    <span class="text-[11px] text-gray-500 pb-1">{{ $summaryCard['suffix'] }}</span>
+                </div>
+                <p class="text-[11px] text-gray-500 mt-2">{{ $summaryCard['hint'] }}</p>
+            </button>
+        @endforeach
+    </div>
+
 
     <!-- العمليات -->
     <div class="bg-gray-900/80 border border-gray-800 rounded-2xl p-6 md:p-7 shadow-xl backdrop-blur-sm">
         <div class="flex items-center justify-between mb-5">
             <h2 class="text-xl font-bold text-gray-100">عمليات الموظف</h2>
-            <p class="text-xs text-gray-500">تصميم موحد وبألوان هادئة لسهولة الاستخدام</p>
+
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            <a href="/user/send-all-reports"
-               class="group bg-gray-800/70 hover:bg-gray-800 text-gray-100 rounded-xl border border-gray-700/80 p-5 transition-all hover:-translate-y-0.5">
-                <div class="flex items-center gap-3">
-                    <span class="w-11 h-11 rounded-xl bg-blue-500/15 text-blue-300 flex items-center justify-center ring-1 ring-blue-500/30">
-                        <i class="fa-solid fa-paper-plane text-lg"></i>
-                    </span>
-                    <div>
-                        <p class="font-semibold">إرسال تقارير الجميع</p>
-                        <p class="text-xs text-gray-400 mt-1">تنفيذ سريع للتقارير</p>
-                    </div>
-                </div>
-            </a>
-
-            @php
-                $actionCards = [
-                    ['modal' => 'employeeDetailsModal', 'title' => 'بيانات المستخدم', 'hint' => 'مراجعة ملف الموظف', 'icon' => 'fa-id-card', 'accent' => 'blue'],
-                    ['modal' => 'withdrawalModal', 'title' => 'سحب', 'hint' => 'تسجيل عملية سحب', 'icon' => 'fa-money-bill-transfer', 'accent' => 'sky'],
-                    ['modal' => 'absenceModal', 'title' => 'غياب', 'hint' => 'إضافة يوم غياب', 'icon' => 'fa-user-xmark', 'accent' => 'amber'],
-                    ['modal' => 'debtModal', 'title' => 'مديونية', 'hint' => 'تسجيل مديونية', 'icon' => 'fa-hand-holding-dollar', 'accent' => 'rose'],
-                    ['modal' => 'creditSaleModal', 'title' => 'بيع آجل', 'hint' => 'إنشاء عملية بيع آجل', 'icon' => 'fa-cart-shopping', 'accent' => 'violet'],
-                    ['modal' => 'creditSaleCollectionModal', 'title' => 'تحصيل', 'hint' => 'تحصيل من المديونية', 'icon' => 'fa-sack-dollar', 'accent' => 'emerald'],
-                ];
-            @endphp
-
-            @foreach($actionCards as $card)
-                <button type="button"
-                        onclick="document.getElementById('{{ $card['modal'] }}').classList.remove('hidden')"
-                        class="group text-right bg-gray-800/70 hover:bg-gray-800 text-gray-100 rounded-xl border border-gray-700/80 p-5 transition-all hover:-translate-y-0.5 w-full">
+                        @foreach($actionCards as $card)
+                @if(($card['type'] ?? 'modal') === 'link')
+                    <a href="{{ $card['url'] }}"
+                       class="group text-right bg-gray-800/70 hover:bg-gray-800 text-gray-100 rounded-xl border border-gray-700/80 p-5 transition-all hover:-translate-y-0.5 w-full">
+                @elseif(($card['type'] ?? 'modal') === 'status')
+                    <form action="{{ $card['url'] }}" method="POST" onsubmit="return confirm('{{ $card['confirm'] }}')">
+                        @csrf
+                        @method($card['method'])
+                        <button type="submit"
+                                class="group text-right bg-gray-800/70 hover:bg-gray-800 text-gray-100 rounded-xl border border-gray-700/80 p-5 transition-all hover:-translate-y-0.5 w-full">
+                @else
+                    <button type="button"
+                            onclick="document.getElementById('{{ $card['modal'] }}').classList.remove('hidden')"
+                            class="group text-right bg-gray-800/70 hover:bg-gray-800 text-gray-100 rounded-xl border border-gray-700/80 p-5 transition-all hover:-translate-y-0.5 w-full">
+                @endif
                     <div class="flex items-center gap-3">
                         <span class="w-11 h-11 rounded-xl bg-{{ $card['accent'] }}-500/15 text-{{ $card['accent'] }}-300 flex items-center justify-center ring-1 ring-{{ $card['accent'] }}-500/30">
                             <i class="fa-solid {{ $card['icon'] }} text-lg"></i>
@@ -85,7 +97,14 @@
                             <p class="text-xs text-gray-400 mt-1">{{ $card['hint'] }}</p>
                         </div>
                     </div>
-                </button>
+                @if(($card['type'] ?? 'modal') === 'link')
+                    </a>
+                @elseif(($card['type'] ?? 'modal') === 'status')
+                        </button>
+                    </form>
+                @else
+                    </button>
+                @endif
             @endforeach
 
             @if($employee->accountant && $employee->accountant->status === 'active')
@@ -117,116 +136,68 @@
             <p class="text-gray-500 text-sm mt-1">آخر الأنشطة المسجلة على هذا الموظف</p>
         </div>
 
-        <a href="{{ route('user.employees.logs', $employee->id) }}?return_to={{ urlencode(url()->current()) }}"
-           class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-lg transition shadow-lg">
-            <i class="fa-solid fa-clock-rotate-left text-lg"></i>
-            <span class="font-semibold">عرض السجل كاملًا</span>
-        </a>
     </div>
 
-    @php
-        $recentLogs = $employee->logs()->latest()->take(5)->get();
 
-        // Badge System
-        $map = [
-            'withdraw' => [
-                'label' => 'سحب نقدي',
-                'color' => 'text-blue-400',
-                'icon'  => 'fa-money-bill-transfer'
-            ],
-            'absence' => [
-                'label' => 'غياب',
-                'color' => 'text-yellow-400',
-                'icon'  => 'fa-user-xmark'
-            ],
-            'debt' => [
-                'label' => 'مديونية',
-                'color' => 'text-red-400',
-                'icon'  => 'fa-circle-exclamation'
-            ],
-            'collect' => [
-                'label' => 'تحصيل مديونية',
-                'color' => 'text-green-400',
-                'icon'  => 'fa-hand-holding-dollar'
-            ],
-            'sale_credit' => [
-                'label' => 'بيع آجل',
-                'color' => 'text-purple-400',
-                'icon'  => 'fa-file-invoice-dollar'
-            ],
-            'store_transfer' => [
-                'label' => 'نقل بين المتاجر',
-                'color' => 'text-indigo-400',
-                'icon'  => 'fa-right-left'
-            ],
-            'salary_update' => [
-                'label' => 'تعديل راتب',
-                'color' => 'text-gray-400',
-                'icon'  => 'fa-sack-dollar'
-            ],
-        ];
-    @endphp
-
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm text-right">
+            <thead class="text-gray-400 border-b border-gray-800">
+                <tr>
+                    <th class="py-3 px-2">العملية</th>
+                    <th class="py-3 px-2">من قام بها</th>
+                    <th class="py-3 px-2">النوع</th>
+                    <th class="py-3 px-2">التاريخ</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800">
     @forelse ($recentLogs as $log)
 
         @php
-            $action = $map[$log->action] ?? [
-                'label' => $log->action,
+            $actionName = $log->action_name ?? $log->action ?? 'operation';
+            $action = $logActionMap[$actionName] ?? [
+                'label' => $actionName,
                 'color' => 'text-gray-400',
                 'icon'  => 'fa-circle-dot'
             ];
-
-            // details JSON
-            $details = is_array($log->details) ? $log->details : json_decode($log->details, true);
+            $meta = is_array($log->meta) ? $log->meta : [];
+            $actorName = $meta['actor_name'] ?? $meta['added_by_name'] ?? 'غير محدد';
+            $typeLabel = $meta['type'] ?? 'عملية';
+            $logDate = $meta['operation_date'] ?? optional($log->created_at)->format('Y-m-d H:i');
         @endphp
 
-        {{-- Log Item --}}
-        <div class="flex items-start justify-between py-6 border-b border-gray-800 last:border-none">
-
-            {{-- Left --}}
-            <div class="flex items-start gap-4">
-
-                {{-- Icon --}}
-                <div class="w-12 h-12 rounded-xl bg-gray-800 flex items-center justify-center shadow-inner">
-                    <i class="fa-solid {{ $action['icon'] }} {{ $action['color'] }} text-xl"></i>
+        <tr class="text-gray-200 hover:bg-gray-800/40">
+            <td class="py-4 px-2">
+                <div class="flex items-center gap-3">
+                    <span class="w-10 h-10 rounded-xl bg-gray-800 flex items-center justify-center">
+                        <i class="fa-solid {{ $action['icon'] }} {{ $action['color'] }}"></i>
+                    </span>
+                    <div>
+                        <p class="font-semibold {{ $action['color'] }}">{{ $action['label'] }}</p>
+                        <p class="text-xs text-gray-500 mt-1">{{ $log->description }}</p>
+                    </div>
                 </div>
-
-                {{-- Text --}}
-                <div class="space-y-1">
-                    <p class="text-lg font-semibold {{ $action['color'] }}">
-                        {{ $action['label'] }}
-                    </p>
-
-                    <p class="text-gray-400 text-sm leading-relaxed">
-                        {{ $log->description }}
-                    </p>
-
-                    {{-- Details --}}
-                    @if($details)
-                        <div class="text-gray-500 text-xs mt-2 space-y-1">
-                            @foreach($details as $key => $value)
-                                <div>{{ $key }}: {{ $value }}</div>
-                            @endforeach
-                        </div>
-                    @endif
-                </div>
-
-            </div>
-
-            {{-- Date --}}
-            <p class="text-gray-500 text-sm whitespace-nowrap">
-                {{ optional($log->created_at)->format('Y-m-d H:i') }}
-            </p>
-
-        </div>
+            </td>
+            <td class="py-4 px-2 text-gray-300">{{ $actorName }}</td>
+            <td class="py-4 px-2 text-gray-400">{{ $typeLabel }}</td>
+            <td class="py-4 px-2 text-gray-500 whitespace-nowrap">{{ $logDate }}</td>
+        </tr>
 
     @empty
 
-        <div class="py-12 text-center text-gray-500">
-            لا يوجد عمليات حتى الآن
-        </div>
+        <tr>
+            <td colspan="4" class="py-12 text-center text-gray-500">
+                لا يوجد عمليات حتى الآن
+            </td>
+        </tr>
 
     @endforelse
+            </tbody>
+        </table>
+    </div>
+
+    <div class="mt-6">
+        {{ $recentLogs->links() }}
+    </div>
 
 </div>
 
@@ -234,10 +205,35 @@
 
 
 </div>
+
+
+@include('components.employee.operation-details-modal', [
+    'modalId' => 'withdrawalsDetailsModal',
+    'title' => 'تفاصيل السحوبات للشهر المحدد',
+    'rows' => $operationDetails['withdrawals'],
+    'columns' => ['amount' => 'المبلغ', 'accounting_date' => 'التاريخ', 'added_by' => 'من أضافها', 'description' => 'الملاحظات'],
+])
+@include('components.employee.operation-details-modal', [
+    'modalId' => 'debtsDetailsModal',
+    'title' => 'تفاصيل المديونيات والتحصيلات للشهر المحدد',
+    'rows' => $operationDetails['debts'],
+    'columns' => ['signed_amount' => 'المبلغ', 'date' => 'التاريخ', 'added_by' => 'من أضافها', 'description' => 'الملاحظات'],
+])
+@include('components.employee.operation-details-modal', [
+    'modalId' => 'creditSalesDetailsModal',
+    'title' => 'تفاصيل البيع الآجل للشهر المحدد',
+    'rows' => $operationDetails['credit_sales'],
+    'columns' => ['amount' => 'القيمة', 'remaining_amount' => 'المتبقي', 'date' => 'التاريخ', 'added_by' => 'من أضافها', 'description' => 'الملاحظات', 'partial_payments' => 'التحصيلات'],
+])
+@include('components.employee.operation-details-modal', [
+    'modalId' => 'absencesDetailsModal',
+    'title' => 'تفاصيل الغياب للشهر المحدد',
+    'rows' => $operationDetails['absences'],
+    'columns' => ['date' => 'التاريخ', 'added_by' => 'من أضافها', 'description' => 'الملاحظات'],
+])
 
 <!-- المودالات -->
 {{-- @include('components.employee.debt-operations-modal', ['person' => $employee]) --}}
-@include('components.employee.details-modal', ['person' => $employee])
 @include('components.employee.withdrawal-form', ['person' => $employee])
 @include('components.employee.absence-form', ['person' => $employee])
 @include('components.employee.debt-form', ['person' => $employee])

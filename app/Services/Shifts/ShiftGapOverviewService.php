@@ -56,33 +56,15 @@ class ShiftGapOverviewService
     {
         return [
             'sales_count' => Sale::where('store_id', $store->id)
-                ->where(function ($query) use ($businessDate) {
-                    $query->whereDate('business_date', $businessDate)
-                        ->orWhere(function ($legacyQuery) use ($businessDate) {
-                            $legacyQuery->whereNull('business_date')
-                                ->whereDate('created_at', $businessDate);
-                        });
-                })
+                ->forAccountingDate($businessDate)
                 ->whereNull('daily_balance_id')
                 ->count(),
             'expenses_count' => Expense::where('store_id', $store->id)
-                ->where(function ($query) use ($businessDate) {
-                    $query->whereDate('business_date', $businessDate)
-                        ->orWhere(function ($legacyQuery) use ($businessDate) {
-                            $legacyQuery->whereNull('business_date')
-                                ->whereDate('created_at', $businessDate);
-                        });
-                })
+                ->forAccountingDate($businessDate)
                 ->whereNull('daily_balance_id')
                 ->count(),
             'withdrawals_count' => Withdrawal::where('store_id', $store->id)
-                ->where(function ($query) use ($businessDate) {
-                    $query->whereDate('business_date', $businessDate)
-                        ->orWhere(function ($legacyQuery) use ($businessDate) {
-                            $legacyQuery->whereNull('business_date')
-                                ->whereDate('created_at', $businessDate);
-                        });
-                })
+                ->forAccountingDate($businessDate)
                 ->whereNull('daily_balance_id')
                 ->count(),
         ];

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use App\Traits\BelongsToStore;
@@ -38,6 +39,24 @@ class Absence extends Model
         'description',      // ملاحظات
         'created_at',       // لضبط تاريخ الإنشاء حسب التاريخ المدخل
     ];
+
+
+    protected $casts = [
+        'date' => 'date',
+    ];
+
+    public function scopeForOperationDate($query, $date)
+    {
+        return $query->whereDate('date', $date);
+    }
+
+    public function scopeBetweenOperationDates($query, $startDate, $endDate)
+    {
+        return $query->whereBetween('date', [
+            Carbon::parse($startDate)->toDateString(),
+            Carbon::parse($endDate)->toDateString(),
+        ]);
+    }
 
     /*
     |--------------------------------------------------------------------------

@@ -7,6 +7,7 @@ use App\Services\Products\ProductSearchService;
 use App\Models\Purchase;
 use App\Models\Sale;
 use App\Services\ShiftLifecycleService;
+use App\Services\Accounting\FinancialSummaryService;
 use App\Models\SaleItem;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -622,8 +623,9 @@ class InternalUseController extends Controller
             $orderBy = $request->get('order_by', 'total_cost');
             $perPage = max(1, min(50, (int) $request->get('per_page', 8)));
             $page = max(1, (int) $request->get('page', 1));
+            $financialSummaryService = app(FinancialSummaryService::class);
 
-            $totalStatsRaw = DB::table('sales')
+            $totalStatsQuery = DB::table('sales')
                 ->select(
                     DB::raw('COUNT(DISTINCT sales.id) as total_operations'),
                     DB::raw('IFNULL(SUM(sales.total), 0) as total_cost'),
@@ -636,19 +638,21 @@ class InternalUseController extends Controller
                 ->where(function ($query) {
                     $query->whereNull('sales.description')
                         ->orWhere('sales.description', '!=', 'manual_invoice_entry');
-                })
-                ->whereBetween('sales.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
-                ->first();
+                });
 
-            $ownerPurchasesStatsRaw = DB::table('purchases')
+            $financialSummaryService->applyAccountingPeriodToTable($totalStatsQuery, 'sales', $startDate, $endDate);
+            $totalStatsRaw = $totalStatsQuery->first();
+
+            $ownerPurchasesStatsQuery = DB::table('purchases')
                 ->where('store_id', $storeId)
                 ->whereNull('deleted_at')
-                ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
                 ->select(
                     DB::raw('COUNT(id) as total_owner_purchases'),
                     DB::raw('IFNULL(SUM(cost), 0) as owner_purchases_total')
-                )
-                ->first();
+                );
+
+            $financialSummaryService->applyAccountingPeriodToTable($ownerPurchasesStatsQuery, 'purchases', $startDate, $endDate);
+            $ownerPurchasesStatsRaw = $ownerPurchasesStatsQuery->first();
 
             $ownerPurchasesTotal = (float) ($ownerPurchasesStatsRaw->owner_purchases_total ?? 0);
             $ownerPurchasesCount = (int) ($ownerPurchasesStatsRaw->total_owner_purchases ?? 0);
@@ -684,8 +688,9 @@ class InternalUseController extends Controller
                     $query->whereNull('s.description')
                         ->orWhere('s.description', '!=', 'manual_invoice_entry');
                 })
-                ->whereBetween('s.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
                 ->groupBy('p.id', 'p.name', 'p.description', 'p.product_type', 'p.is_splittable', 'p.items_per_unit', 'p.roll_length');
+
+            $financialSummaryService->applyAccountingPeriodToTable($query, 's', $startDate, $endDate, 'sales');
 
             if ($orderBy === 'total_quantity') {
                 $query->orderByDesc('total_quantity');
@@ -764,7 +769,9 @@ class InternalUseController extends Controller
             'end_date' => 'required|date',
         ]);
 
-        $history = DB::table('sale_items')
+        $financialSummaryService = app(FinancialSummaryService::class);
+
+        $historyQuery = DB::table('sale_items')
             ->join('sales', 'sale_items.sale_id', '=', 'sales.id')
             ->join('products', 'sale_items.product_id', '=', 'products.id')
             ->where('sales.store_id', $storeId)
@@ -773,8 +780,11 @@ class InternalUseController extends Controller
                 $query->whereNull('sales.description')
                     ->orWhere('sales.description', '!=', 'manual_invoice_entry');
             })
-            ->where('sale_items.product_id', $request->product_id)
-            ->whereBetween('sales.created_at', [$request->start_date . ' 00:00:00', $request->end_date . ' 23:59:59'])
+            ->where('sale_items.product_id', $request->product_id);
+
+        $financialSummaryService->applyAccountingPeriodToTable($historyQuery, 'sales', $request->start_date, $request->end_date);
+
+        $history = $historyQuery
             ->select(
                 'sale_items.id',
                 'sale_items.quantity',
@@ -868,7 +878,9 @@ class InternalUseController extends Controller
         $startDate = $period->copy()->startOfMonth()->format('Y-m-d');
         $endDate = $period->copy()->endOfMonth()->format('Y-m-d');
 
-        $internalUseSales = DB::table('sales as s')
+        $financialSummaryService = app(FinancialSummaryService::class);
+
+        $internalUseSalesQuery = DB::table('sales as s')
             ->leftJoin('sale_items as si', 's.id', '=', 'si.sale_id')
             ->leftJoin('products as p', 'si.product_id', '=', 'p.id')
             ->where('s.store_id', $storeId)
@@ -876,8 +888,11 @@ class InternalUseController extends Controller
             ->where(function ($query) {
                 $query->whereNull('s.description')
                     ->orWhere('s.description', '!=', 'manual_invoice_entry');
-            })
-            ->whereBetween('s.created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+            });
+
+        $financialSummaryService->applyAccountingPeriodToTable($internalUseSalesQuery, 's', $startDate, $endDate, 'sales');
+
+        $internalUseSales = $internalUseSalesQuery
             ->select(
                 's.id',
                 's.total as amount',
@@ -906,10 +921,13 @@ class InternalUseController extends Controller
                 ];
             });
 
-        $ownerPurchases = DB::table('purchases')
+        $ownerPurchasesQuery = DB::table('purchases')
             ->where('store_id', $storeId)
-            ->whereNull('deleted_at')
-            ->whereBetween('created_at', [$startDate . ' 00:00:00', $endDate . ' 23:59:59'])
+            ->whereNull('deleted_at');
+
+        $financialSummaryService->applyAccountingPeriodToTable($ownerPurchasesQuery, 'purchases', $startDate, $endDate);
+
+        $ownerPurchases = $ownerPurchasesQuery
             ->select('id', 'purchase_name', 'description', 'cost', 'created_at')
             ->get()
             ->map(function ($item) {

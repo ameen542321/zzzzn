@@ -2,296 +2,186 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-
     <style>
-        body {
-            font-family: 'Amiri', 'Cairo', serif;
-            direction: rtl;
-            text-align: right;
-            font-size: 15px;
-            line-height: 1.9;
-            color: #222;
-            padding: 25px;
-        }
-
-        /* الشعار + العنوان */
-        .report-header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-
-        .report-header .logo {
-            font-size: 32px;
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 5px;
-        }
-
-        .report-header .employee-name {
-            font-size: 22px;
-            font-weight: bold;
-            margin-top: 10px;
-            color: #444;
-        }
-
-        .report-header .title {
-            font-size: 18px;
-            margin-top: 5px;
-            color: #666;
-        }
-
-        h2 {
-            margin: 35px 0 15px;
-            font-size: 20px;
-            font-weight: bold;
-            border-right: 5px solid #444;
-            padding-right: 12px;
-            color: #222;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 35px;
-            font-size: 14px;
-        }
-
-        th, td {
-            border: 1px solid #bbb;
-            padding: 10px;
-        }
-
-        th {
-            background: #f7f7f7;
-            font-weight: bold;
-            color: #333;
-            text-align: center;
-        }
-
-        tbody tr:nth-child(even) {
-            background: #fafafa;
-        }
-
-        tbody tr:nth-child(odd) {
-            background: #ffffff;
-        }
-
-        tbody td {
-            text-align: center;
-        }
-
-        .section {
-            margin-bottom: 45px;
-        }
-
-        .footer {
-            margin-top: 50px;
-            font-size: 14px;
-            text-align: center;
-            border-top: 1px solid #ccc;
-            padding-top: 10px;
-            color: #444;
-        }
-
-        /* ألوان المديونية */
-        .debt-add { color: #dc2626; font-weight:bold; }
-        .debt-partial { color: #059669; font-weight:bold; }
-        .debt-single { color: #10b981; font-weight:bold; }
-        .debt-full { color: #065f46; font-weight:bold; }
+        body { font-family: 'Amiri', 'Cairo', serif; direction: rtl; text-align: right; font-size: 12px; line-height: 1.7; color: #1f2933; padding: 18px; background: #ffffff; }
+        .header { width: 100%; border-collapse: collapse; margin-bottom: 18px; border: 1px solid #d7dde5; }
+        .header td { border: none; padding: 14px; vertical-align: top; }
+        .header .side { width: 32%; background: #f8fafc; }
+        .header .center { width: 36%; text-align: center; background: #eef4ff; border-right: 1px solid #d7dde5; border-left: 1px solid #d7dde5; }
+        .brand { font-size: 18px; font-weight: bold; color: #1f3a5f; margin-bottom: 4px; }
+        .report-title { font-size: 20px; font-weight: bold; color: #172554; margin: 7px 0 3px; }
+        .month { font-size: 13px; color: #475569; }
+        .info-title { font-size: 12px; font-weight: bold; color: #475569; margin-bottom: 6px; border-bottom: 1px solid #d7dde5; padding-bottom: 4px; }
+        .info-line { margin: 3px 0; color: #334155; }
+        .info-line span { color: #64748b; }
+        .summary { width: 100%; border-collapse: collapse; margin: 12px 0 18px; }
+        .summary td { width: 25%; padding: 10px; border: 1px solid #d7dde5; background: #fbfdff; text-align: center; }
+        .summary .label { display: block; color: #64748b; font-size: 11px; }
+        .summary .value { display: block; color: #0f172a; font-size: 15px; font-weight: bold; margin-top: 3px; }
+        h2 { margin: 18px 0 8px; font-size: 15px; font-weight: bold; color: #0f172a; border-right: 4px solid #2563eb; padding-right: 8px; }
+        table.data { width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 11px; }
+        table.data th, table.data td { border: 1px solid #d7dde5; padding: 7px; text-align: center; vertical-align: top; }
+        table.data th { background: #f1f5f9; color: #334155; font-weight: bold; }
+        table.data tbody tr:nth-child(even) { background: #fbfdff; }
+        .note { color: #64748b; }
+        .amount-add { color: #b91c1c; font-weight: bold; }
+        .amount-collect { color: #047857; font-weight: bold; }
+        .empty-box { border: 1px dashed #cbd5e1; background: #f8fafc; color: #64748b; padding: 10px; margin-top: 18px; text-align: center; }
+        .footer { margin-top: 20px; font-size: 11px; text-align: center; border-top: 1px solid #d7dde5; padding-top: 8px; color: #64748b; }
     </style>
-
 </head>
-
 <body>
+@php
+    $store = $person->store;
+    $owner = $store?->user;
+    $shiftDate = function ($item) {
+        return $item->business_date ?? $item->date ?? optional($item->created_at)->format('Y-m-d') ?? '—';
+    };
+@endphp
 
-    <!-- الشعار + اسم الموظف + عنوان التقرير -->
-    <div class="report-header">
-        <div class="logo">{{ config('app.name', 'Carled') }}</div>
-        <div class="employee-name">{{ $person->name }}</div>
-        <div class="title">تقرير مفصل</div>
-        <div class="title">الفترة: {{ $report_month }}</div>
+<table class="header">
+    <tr>
+        <td class="side">
+            <div class="info-title">بيانات العامل</div>
+            <div class="info-line"><span>الاسم:</span> {{ $person->name }}</div>
+            <div class="info-line"><span>الجوال:</span> {{ $person->phone ?? '—' }}</div>
+            <div class="info-line"><span>الراتب:</span> {{ number_format($person->salary ?? 0, 2) }} ريال</div>
+        </td>
+        <td class="center">
+            <div class="brand">{{ config('app.name', 'Carled') }}</div>
+            <div class="report-title">تقرير شهري</div>
+            <div class="month">{{ $report_month }}</div>
+        </td>
+        <td class="side">
+            <div class="info-title">بيانات المتجر</div>
+            <div class="info-line"><span>المتجر:</span> {{ $store->name ?? '—' }}</div>
+            <div class="info-line"><span>المالك:</span> {{ $owner->name ?? '—' }}</div>
+            <div class="info-line"><span>تاريخ الإصدار:</span> {{ now()->format('Y-m-d') }}</div>
+        </td>
+    </tr>
+</table>
+
+<table class="summary">
+    <tr>
+        <td><span class="label">الراتب المستحق</span><span class="value">{{ number_format($salary_payable ?? 0, 2) }}</span></td>
+        <td><span class="label">السحوبات</span><span class="value">{{ number_format($withdrawals_total ?? 0, 2) }}</span></td>
+        <td><span class="label">خصم الغياب</span><span class="value">{{ number_format($absence_penalty ?? 0, 2) }}</span></td>
+        <td><span class="label">الصافي</span><span class="value">{{ number_format($salary_net ?? 0, 2) }}</span></td>
+    </tr>
+</table>
+
+@if($withdrawals->isNotEmpty())
+    <h2>السحوبات</h2>
+    <table class="data">
+        <thead><tr><th>#</th><th>المبلغ</th><th>التاريخ</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
+        <tbody>
+        @foreach($withdrawals as $index => $item)
+            <tr>
+                <td>{{ $index + 1 }}</td>
+                <td>{{ number_format($item->amount, 2) }} ريال</td>
+                <td>{{ $shiftDate($item) }}</td>
+                <td>{{ $item->addedBy->name ?? '—' }}</td>
+                <td>{{ $item->description ?? '—' }}</td>
+            </tr>
+        @endforeach
+        </tbody>
+    </table>
+@endif
+
+@if($absences->isNotEmpty())
+    <h2>الغيابات</h2>
+    <table class="data">
+        <thead><tr><th>#</th><th>التاريخ</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
+        <tbody>
+        @foreach($absences as $index => $absence)
+            <tr>
+                <td>{{ $index + 1 }}</td>
+                <td>{{ $shiftDate($absence) }}</td>
+                <td>{{ $absence->addedBy->name ?? '—' }}</td>
+                <td>{{ $absence->description ?? '—' }}</td>
+            </tr>
+        @endforeach
+        </tbody>
+    </table>
+@endif
+
+@if($debts->isNotEmpty())
+    <h2>المديونيات والتحصيلات</h2>
+    <table class="data">
+        <thead><tr><th>#</th><th>النوع</th><th>المبلغ</th><th>التاريخ</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
+        <tbody>
+        @foreach($debts as $index => $item)
+            @php($isCollection = (float) $item->amount < 0)
+            <tr>
+                <td>{{ $index + 1 }}</td>
+                <td>{{ $isCollection ? 'تحصيل' : 'إضافة مديونية' }}</td>
+                <td class="{{ $isCollection ? 'amount-collect' : 'amount-add' }}">{{ number_format(abs((float) $item->amount), 2) }} ريال</td>
+                <td>{{ $shiftDate($item) }}</td>
+                <td>{{ $item->addedBy->name ?? '—' }}</td>
+                <td>{{ $item->description ?? '—' }}</td>
+            </tr>
+        @endforeach
+        </tbody>
+    </table>
+@endif
+
+@if($creditSalesPending->isNotEmpty())
+    <h2>البيع الآجل غير المحصل</h2>
+    <table class="data">
+        <thead><tr><th>#</th><th>القيمة</th><th>المتبقي</th><th>التاريخ</th><th>سجّل بواسطة</th><th>الملاحظات</th></tr></thead>
+        <tbody>
+        @foreach($creditSalesPending as $index => $item)
+            <tr>
+                <td>{{ $index + 1 }}</td>
+                <td>{{ number_format($item->amount, 2) }} ريال</td>
+                <td>{{ number_format($item->remaining_amount, 2) }} ريال</td>
+                <td>{{ $shiftDate($item) }}</td>
+                <td>{{ $item->addedBy->name ?? '—' }}</td>
+                <td>{{ $item->description ?? '—' }}</td>
+            </tr>
+        @endforeach
+        </tbody>
+    </table>
+@endif
+
+@if($creditSalesCollected->isNotEmpty())
+    <h2>البيع الآجل المحصل والتحصيلات</h2>
+    <table class="data">
+        <thead><tr><th>#</th><th>القيمة</th><th>التاريخ</th><th>سجّل بواسطة</th><th>التحصيلات</th><th>الملاحظات</th></tr></thead>
+        <tbody>
+        @foreach($creditSalesCollected as $index => $item)
+            <tr>
+                <td>{{ $index + 1 }}</td>
+                <td>{{ number_format($item->amount, 2) }} ريال</td>
+                <td>{{ $shiftDate($item) }}</td>
+                <td>{{ $item->addedBy->name ?? '—' }}</td>
+                <td>
+                    @forelse(collect($item->partial_payments ?? []) as $payment)
+                        {{ number_format((float) ($payment['amount'] ?? 0), 2) }} ريال
+                        - {{ isset($payment['date']) ? \Carbon\Carbon::parse($payment['date'])->format('Y-m-d') : '—' }}
+                        - {{ $payment['added_by_name'] ?? 'غير محدد' }}
+                        @if(!empty($payment['description'])) ({{ $payment['description'] }}) @endif
+                        @if(!$loop->last)<br>@endif
+                    @empty
+                        <span class="note">لا توجد تفاصيل تحصيل محفوظة</span>
+                    @endforelse
+                </td>
+                <td>{{ $item->description ?? '—' }}</td>
+            </tr>
+        @endforeach
+        </tbody>
+    </table>
+@endif
+
+@if($emptySections->isNotEmpty())
+    <div class="empty-box">
+        لا توجد بيانات في هذا التقرير للأقسام التالية: {{ $emptySections->implode('، ') }}.
     </div>
+@endif
 
-    <!-- بيانات العامل -->
-    <div class="section">
-        <h2>1. بيانات العامل</h2>
-        <table>
-            <tr><th>#</th><th>الحقل</th><th>القيمة</th></tr>
-            <tr><td>1</td><td>اسم العامل</td><td>{{ $person->name }}</td></tr>
-            <tr><td>2</td><td>رقم الجوال</td><td>{{ $person->phone ?? '—' }}</td></tr>
-            <tr><td>3</td><td>الراتب الشهري</td><td>{{ number_format($person->salary, 2) }} ريال</td></tr>
-            <tr><td>4</td><td>المتجر</td><td>{{ $person->store->name }}</td></tr>
-            <tr><td>5</td><td>اسم المالك</td><td>{{ $person->store->user->name }}</td></tr>
-        </table>
-    </div>
-
-
-    <!-- ملخص الراتب الشهري -->
-    <div class="section">
-        <h2>2. ملخص الراتب الشهري</h2>
-        <table>
-            <tr><th>البند</th><th>القيمة</th></tr>
-            <tr><td>الراتب المستحق للفترة</td><td>{{ number_format($salary_payable ?? $person->salary, 2) }} ريال</td></tr>
-            <tr><td>إجمالي سحوبات الشهر</td><td>{{ number_format($withdrawals_total ?? $withdrawals->sum('amount'), 2) }} ريال</td></tr>
-            <tr><td>خصم الغياب للشهر</td><td>{{ number_format($absence_penalty ?? 0, 2) }} ريال ({{ number_format($absences_count ?? 0) }} يوم)</td></tr>
-            <tr><td><strong>الصافي بعد السحب والغياب</strong></td><td><strong>{{ number_format($salary_net ?? 0, 2) }} ريال</strong></td></tr>
-        </table>
-    </div>
-
-    <!-- السحوبات -->
-    <div class="section">
-        <h2>3. السحوبات</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>المبلغ</th>
-                    <th>التاريخ</th>
-                    <th>الوصف</th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse($withdrawals as $index => $item)
-                    <tr>
-                        <td>{{ $index + 1 }}</td>
-                        <td>{{ number_format($item->amount, 2) }}</td>
-                        <td>{{ $item->date }}</td>
-                        <td>{{ $item->description ?? '—' }}</td>
-                    </tr>
-                @empty
-                    <tr><td colspan="4">لا توجد سحوبات</td></tr>
-                @endforelse
-            </tbody>
-        </table>
-    </div>
-
-    <!-- الغياب -->
-    <div class="section">
-        <h2>4. الغياب</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>التاريخ</th>
-                    <th>الوصف</th>
-                    <th>سجّل بواسطة</th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse($absences as $index => $absence)
-                    <tr>
-                        <td>{{ $index + 1 }}</td>
-                        <td>{{ $absence->date }}</td>
-                        <td>{{ $absence->description ?? '—' }}</td>
-                        <td>{{ $absence->addedBy->name ?? '—' }}</td>
-                    </tr>
-                @empty
-                    <tr><td colspan="4">لا يوجد غياب</td></tr>
-                @endforelse
-            </tbody>
-        </table>
-    </div>
-
-    <!-- المديونية -->
-    <div class="section">
-        <h2>5. المديونية</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>النوع</th>
-                    <th>المبلغ</th>
-                    <th>الوصف</th>
-                    <th>التاريخ</th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse($debts as $index => $item)
-                    <tr>
-                        <td>{{ $index + 1 }}</td>
-
-                        <!-- نوع العملية -->
-                        <td>
-                            @php
-                                $debtType = $item->log_type ?? $item->action_name ?? $item->type ?? null;
-                            @endphp
-                            @switch($debtType)
-                                @case('debt_add') <span class="debt-add">إضافة</span> @break
-                                @case('debt_collect_partial') <span class="debt-partial">تحصيل جزئي</span> @break
-                                @case('debt_collect_single') <span class="debt-single">تحصيل عملية</span> @break
-                                @case('debt_collect_full') <span class="debt-full">تحصيل كامل</span> @break
-                                @default <span class="debt-add">مديونية</span>
-                            @endswitch
-                        </td>
-
-                        <td>{{ number_format($item->amount, 2) }}</td>
-                        <td>{{ $item->description ?? '—' }}</td>
-                        <td>{{ $item->date }}</td>
-                    </tr>
-                @empty
-                    <tr><td colspan="5">لا توجد مديونية</td></tr>
-                @endforelse
-            </tbody>
-        </table>
-    </div>
-
-    <!-- بيع آجل غير محصّل -->
-    <div class="section">
-        <h2>5. بيع آجل غير محصّل</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>المبلغ</th>
-                    <th>الوصف</th>
-                    <th>التاريخ</th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse($creditSalesPending as $index => $item)
-                    <tr>
-                        <td>{{ $index + 1 }}</td>
-                        <td>{{ number_format($item->amount, 2) }}</td>
-                        <td>{{ $item->description ?? '—' }}</td>
-                        <td>{{ $item->date }}</td>
-                    </tr>
-                @empty
-                    <tr><td colspan="4">لا توجد عمليات بيع آجل غير محصّلة</td></tr>
-                @endforelse
-            </tbody>
-        </table>
-    </div>
-
-    <!-- بيع آجل محصّل -->
-    <div class="section">
-        <h2>6. بيع آجل محصّل</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>المبلغ</th>
-                    <th>الوصف</th>
-                    <th>التاريخ</th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse($creditSalesCollected as $index => $item)
-                    <tr>
-                        <td>{{ $index + 1 }}</td>
-                        <td>{{ number_format($item->amount, 2) }}</td>
-                        <td>{{ $item->description ?? '—' }}</td>
-                        <td>{{ $item->date }}</td>
-                    </tr>
-                @empty
-                    <tr><td colspan="4">لا توجد عمليات بيع آجل محصّلة</td></tr>
-                @endforelse
-            </tbody>
-        </table>
-    </div>
-
-    <div class="footer">
-        تم إنشاء التقرير بواسطة: {{ $created_by->name }}
-    </div>
-
+<div class="footer">
+    <div>تم إنشاء التقرير بواسطة: CARLED</div>
+    <div style="font-size: 10px; margin-top: 3px;">هذا المستند قابل للمراجعة خلال 10 أيام من تاريخ إصداره.</div>
+</div>
 </body>
 </html>

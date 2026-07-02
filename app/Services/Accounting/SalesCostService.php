@@ -15,12 +15,9 @@ class SalesCostService
     public function soldProductsCostForPeriod(int $storeId, $periodStart, $periodEnd, array $includedSaleTypes): float
     {
         $legacySalesQuery = Sale::where('store_id', $storeId)
-            ->whereBetween('created_at', [$periodStart, $periodEnd])
+            ->betweenAccountingDates($periodStart, $periodEnd)
             ->whereIn('sale_type', $includedSaleTypes)
-            ->where(function ($query) {
-                $query->whereNull('description')
-                    ->orWhere('description', '!=', 'manual_invoice_entry');
-            });
+            ->excludeManualInvoiceEntries();
 
         // توافق قديم: يحمي البيئات التي لم تطبق عمود sale_items.total_cost بعد.
         // خطة الحذف: بعد تثبيت بيانات التكلفة القديمة في بداية شهر 7 واعتماد العمود نهائيًا،
@@ -39,7 +36,10 @@ class SalesCostService
         $salesCostsQuery = DB::table('sales')
             ->leftJoin('sale_items', 'sales.id', '=', 'sale_items.sale_id')
             ->where('sales.store_id', $storeId)
-            ->whereBetween('sales.created_at', [$periodStart, $periodEnd])
+            ->whereRaw('COALESCE(sales.business_date, DATE(sales.created_at)) BETWEEN ? AND ?', [
+                Carbon::parse($periodStart)->toDateString(),
+                Carbon::parse($periodEnd)->toDateString(),
+            ])
             ->whereIn('sales.sale_type', $includedSaleTypes)
             ->where(function ($query) {
                 $query->whereNull('sales.description')
@@ -57,5 +57,74 @@ class SalesCostService
             ->fromSub($salesCostsQuery, 'sales_costs')
             ->selectRaw('COALESCE(SUM(CASE WHEN use_legacy_cost = 1 THEN legacy_products_cost WHEN items_count > 0 AND items_count = costed_items_count THEN item_total_cost ELSE legacy_products_cost END), 0) as total_cost')
             ->value('total_cost');
+    }
+
+    /**
+     * يحسب تكلفة المنتجات المباعة مجمعة حسب المتجر باستعلام واحد للوحة المالك والتقارير.
+     */
+    public function soldProductsCostByStoreForPeriod($storeIds, $periodStart, $periodEnd, array $includedSaleTypes): array
+    {
+        $storeIds = collect($storeIds)->map(fn ($id) => (int) $id)->filter()->values();
+        if ($storeIds->isEmpty()) {
+            return [];
+        }
+
+        if (! Schema::hasColumn('sale_items', 'total_cost')) {
+            return Sale::query()
+                ->excludeManualInvoiceEntries()
+                ->whereIn('store_id', $storeIds)
+                ->betweenAccountingDates($periodStart, $periodEnd)
+                ->whereIn('sale_type', $includedSaleTypes)
+                ->where('products_total', '>', 0)
+                ->groupBy('store_id')
+                // لا نسمح للتكلفة التراجعية السالبة بتخفيض تكلفة المتجر.
+                ->selectRaw('store_id, COALESCE(SUM(GREATEST((products_total + labor_total) - profit, 0)), 0) as aggregate')
+                ->pluck('aggregate', 'store_id')
+                ->map(fn ($value) => (float) $value)
+                ->all();
+        }
+
+        $salesCostsQuery = DB::table('sales')
+            ->leftJoin('sale_items', 'sales.id', '=', 'sale_items.sale_id')
+            ->whereIn('sales.store_id', $storeIds)
+            ->whereRaw('COALESCE(sales.business_date, DATE(sales.created_at)) BETWEEN ? AND ?', [
+                Carbon::parse($periodStart)->toDateString(),
+                Carbon::parse($periodEnd)->toDateString(),
+            ])
+            ->whereIn('sales.sale_type', $includedSaleTypes)
+            ->where(function ($query) {
+                $query->whereNull('sales.description')
+                    ->orWhere('sales.description', '!=', 'manual_invoice_entry');
+            })
+            ->groupBy(
+                'sales.id',
+                'sales.store_id',
+                'sales.products_total',
+                'sales.labor_total',
+                'sales.profit'
+            )
+            ->selectRaw('sales.store_id')
+            ->selectRaw('COUNT(sale_items.id) as items_count')
+            ->selectRaw('SUM(CASE WHEN sale_items.total_cost IS NOT NULL THEN 1 ELSE 0 END) as costed_items_count')
+            ->selectRaw('COALESCE(SUM(sale_items.total_cost), 0) as saved_items_cost')
+            // legacy_cost يستعمل فقط عند نقص تكلفة بعض عناصر البيع، لذلك نحميه من السالب.
+            ->selectRaw('GREATEST(COALESCE((sales.products_total + sales.labor_total) - sales.profit, 0), 0) as legacy_cost');
+
+        return DB::query()
+            ->fromSub($salesCostsQuery, 'sales_costs')
+            ->groupBy('store_id')
+            ->selectRaw('store_id')
+            ->selectRaw(
+                'COALESCE(SUM(
+                    CASE
+                        WHEN items_count = 0 THEN 0
+                        WHEN items_count = costed_items_count THEN GREATEST(saved_items_cost, 0)
+                        ELSE legacy_cost
+                    END
+                ), 0) as aggregate'
+            )
+            ->pluck('aggregate', 'store_id')
+            ->map(fn ($value) => (float) $value)
+            ->all();
     }
 }

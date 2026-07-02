@@ -21,6 +21,10 @@ class EmployeeLogService
         return;
     }
 
+    if (! is_array($meta)) {
+        $meta = ['type' => $meta];
+    }
+
     $person->logs()->create([
         'store_id'    => $person->store_id,
         'action_name' => $actionName,   // ← هذا هو الصحيح الآن

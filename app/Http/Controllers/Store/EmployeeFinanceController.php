@@ -1,19 +1,15 @@
 <?php
 
 namespace App\Http\Controllers\Store;
-use App\Helpers\LogHelper;
 use App\Models\Debt;
 use App\Models\Absence;
-use App\Models\Expense;
 use App\Models\Employee;
 use App\Models\CreditSale;
 use App\Models\Withdrawal;
 use App\Models\EmployeeLog;
-use App\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use App\Http\Controllers\Controller;
-use App\Services\EmployeeLogService;
 use App\Services\Employees\EmployeeOperationException;
 use App\Services\Employees\EmployeeOperationService;
 
@@ -168,61 +164,28 @@ class EmployeeFinanceController extends Controller
     $person = $this->findPerson($id);
     $this->authorizePerson($person);
 
-    $request->validate([
+    $validated = $request->validate([
         'amount'      => 'required|numeric|min:0.01',
         'description' => 'nullable|string|max:255',
         'date'        => 'required|date',
     ]);
 
-    $description = trim($request->description) ?: null;
+    $employeeOperationService = app(EmployeeOperationService::class);
 
-    // منع التكرار
-    $exists = CreditSale::where('store_id', $person->store_id)
-        ->where('person_id', $person->id)
-        ->where('amount', $request->amount)
-        ->where('description', $description)
-        ->whereDate('created_at', today())
-        ->exists();
-
-    if ($exists) {
-        return back()->with('error', 'تم تسجيل البيع الآجل مسبقًا بنفس البيانات اليوم');
+    try {
+        $employeeOperationService->recordCreditSale(
+            $person,
+            $validated,
+            $employeeOperationService->actorFromCurrentAuth(),
+            ['use_shift_gap_date' => true]
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
     }
-
-    $accountant = auth('accountant')->user();
-
-    // إنشاء البيع الآجل
-    $person->creditSales()->create([
-        'store_id'         => $person->store_id,
-        'person_id'        => $person->id,
-        'person_type'      => Employee::class,
-        'amount'           => $request->amount,
-        'remaining_amount' => $request->amount,
-        'partial_payments' => [],
-        'description'      => $description,
-        'date'             => $request->date,
-        'status'           => 'pending',
-        'month'            => now()->format('Y-m'),
-        'added_by'         => $accountant->id,
-    ]);
-
-    // لوق الموظف
-    EmployeeLogService::add(
-        $person,
-        'credit_sale',
-        "تسجيل بيع آجل بقيمة {$request->amount} ريال",
-        $request->amount,
-        'operation'
-    );
-
-    // 🔥 لوق صاحب المتجر (يظهر في الداشبورد)
-    LogHelper::add(
-        'credit_sale',
-        "قام المحاسب {$accountant->name} بتسجيل بيع آجل بقيمة {$request->amount} ريال على الموظف {$person->name}",
-        $person->store_id
-    );
 
     return back()->with('success', 'تم تسجيل البيع الآجل بنجاح');
 }
+
 
 
     /*
@@ -240,110 +203,30 @@ public function storeCollection(Request $request, $saleId)
 
     $person = $sale->person;
 
-    // منع المحاسب من تحصيل مديونيته الشخصية
     if ($person->id == $accountant->employee_id) {
         return back()->with('error', 'غير مصرح لك بتحصيل البيع الآجل الخاص بك.');
     }
 
-    // منع التحصيل إذا كان السداد مكتمل مسبقًا
-    if ($sale->status === 'deducted') {
-        return response('', 403);
-    }
+    $amount = $request->has('amount') ? (float) $request->amount : (float) $sale->remaining_amount;
 
-    /*
-    |--------------------------------------------------------------------------
-    | تحصيل كامل
-    |--------------------------------------------------------------------------
-    */
-    if (!$request->has('amount')) {
-
-        $sale->update([
-            'remaining_amount' => 0,
-            'partial_payments' => [],
-            'status'           => 'deducted',
-            'deducted_month'   => now()->format('Y-m'),
-        ]);
-
-        $sale->syncLinkedSaleCollectionState();
-
-        EmployeeLog::create([
-            'person_id'   => $sale->person_id,
-            'person_type' => $sale->person_type,
-            'store_id'    => $sale->store_id,
-            'action_name' => 'credit_sale_deducted',
-            'amount'      => $sale->amount,
-            'description' => 'تحصيل بيع آجل بقيمة كاملة ' . number_format($sale->amount, 2) . ' ريال',
-        ]);
-
-        // 🔥 تسجيل لوق لصاحب المتجر
-        LogHelper::add(
-            'credit_sale_deducted',
-            "قام المحاسب {$accountant->name} بتحصيل بيع آجل بقيمة كاملة {$sale->amount} ريال من الموظف {$person->name}",
-            $sale->store_id
+    try {
+        app(EmployeeOperationService::class)->collectCreditSale(
+            $sale,
+            $amount,
+            app(EmployeeOperationService::class)->actorFromCurrentAuth(),
+            ['full' => ! $request->has('amount')]
         );
-
-        $sale->delete();
-
-        return back()->with('success', 'تم تحصيل البيع الآجل بنجاح');
+    } catch (EmployeeOperationException $exception) {
+        return $request->has('amount')
+            ? response($exception->getMessage(), 422)
+            : back()->with('error', $exception->getMessage());
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | تحصيل جزئي
-    |--------------------------------------------------------------------------
-    */
-    if (!is_numeric($request->amount)) {
-        return response('', 422);
-    }
-
-    $amount = floatval($request->amount);
-
-    if ($amount < 1 || $amount > $sale->remaining_amount) {
-        return response('', 422);
-    }
-
-    $sale->remaining_amount -= $amount;
-
-    $payments = $sale->partial_payments ?? [];
-    $payments[] = [
-        'amount' => $amount,
-        'date'   => now()->toDateTimeString(),
-    ];
-
-    $sale->partial_payments = $payments;
-
-    if ($sale->remaining_amount == 0) {
-        $sale->status = 'deducted';
-        $sale->deducted_month = now()->format('Y-m');
-    } else {
-        $sale->status = 'pending';
-    }
-
-    $sale->save();
-    $sale->syncLinkedSaleCollectionState();
-
-    EmployeeLog::create([
-        'person_id'   => $sale->person_id,
-        'person_type' => $sale->person_type,
-        'store_id'    => $sale->store_id,
-        'action_name' => 'credit_sale_partial',
-        'amount'      => $amount,
-        'description' => 'تحصيل بيع آجل بقيمة جزئية ' . number_format($amount, 2) . ' ريال',
-    ]);
-
-    // 🔥 تسجيل لوق لصاحب المتجر
-    LogHelper::add(
-        'credit_sale_partial',
-        "قام المحاسب {$accountant->name} بتحصيل مبلغ {$amount} ريال من بيع آجل للموظف {$person->name}",
-        $sale->store_id
-    );
-
-    if ($sale->remaining_amount == 0) {
-        $sale->delete();
-    }
-
-    return response()->noContent();
+    return $request->has('amount')
+        ? response()->noContent()
+        : back()->with('success', 'تم تحصيل البيع الآجل بنجاح');
 }
+
 
 
 
@@ -359,76 +242,28 @@ public function storeCollection(Request $request, $saleId)
     $person = $this->findPerson($id);
     $this->authorizePerson($person);
 
-    $request->validate([
+    $validated = $request->validate([
         'amount'      => 'required|numeric|min:0.01',
         'description' => 'nullable|string|max:255',
         'date'        => 'required|date',
     ]);
 
-    $description = trim($request->description) ?: null;
+    $employeeOperationService = app(EmployeeOperationService::class);
 
-    // منع التكرار خلال نفس اليوم
-    $exists = Debt::where('store_id', $person->store_id)
-        ->where('person_id', $person->id)
-        ->where('amount', $request->amount)
-        ->where('description', $description)
-        ->whereDate('created_at', today())
-        ->exists();
-
-    if ($exists) {
-        return back()->with('error', 'تم تسجيل المديونية مسبقًا بنفس البيانات اليوم');
+    try {
+        $employeeOperationService->recordDebt(
+            $person,
+            $validated,
+            $employeeOperationService->actorFromCurrentAuth(),
+            ['use_shift_gap_date' => true, 'notify_store_owner' => true]
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
     }
-
-    $accountant = auth('accountant')->user();
-
-    // إنشاء المديونية
-    $debt = $person->debts()->create([
-        'store_id'    => $person->store_id,
-        'person_id'   => $person->id,
-        'person_type' => Employee::class,
-        'amount'      => $request->amount,
-        'description' => $description,
-        'date'        => $request->date,
-        'status'      => 'pending',
-        'month'       => now()->format('Y-m'),
-        'added_by'    => $accountant->id,
-    ]);
-
-    // تسجيل لوق للموظف
-    EmployeeLogService::add(
-        $person,
-        'debt',
-        "تسجيل مديونية بقيمة {$request->amount} ريال",
-        $request->amount,
-        'operation'
-    );
-
-    // تسجيل لوق لصاحب المتجر
-LogHelper::add(
-    'employee_debt',
-    "قام المحاسب {$accountant->name} بتسجيل مديونية بقيمة {$request->amount} ريال على الموظف {$person->name}",
-    $person->store_id
-);
-
-
-
-
-    // إشعار لصاحب المتجر
-    Notification::create([
-        'sender_id'    => $accountant->id,
-        'sender_type'  => 'accountant',
-
-        'target_type'  => 'user',
-        'target_ids'   => [$person->store->user->id],
-
-        'title'        => 'تسجيل مديونية',
-        'message'      => "قام المحاسب {$accountant->name} بتسجيل مديونية بقيمة {$request->amount} ريال على الموظف {$person->name}",
-        'template_key' => 'debt_add',
-        'channel'      => 'CARLED',
-    ]);
 
     return back()->with('success', 'تم تسجيل المديونية بنجاح');
 }
+
 
 
 
@@ -438,81 +273,25 @@ public function collectPartial(Request $request, $debtId)
         'amount' => ['required', 'numeric', 'gt:0'],
     ]);
 
-    $amount = (float) $validated['amount'];
     $debt = Debt::findOrFail($debtId);
     $person = $debt->person;
     $this->authorizePerson($person);
     $accountant = auth('accountant')->user();
 
-    // 🔥 منع المحاسب من تحصيل مديونيته الشخصية
     if ($person->id == $accountant->employee_id) {
         return back()->with('error', 'غير مصرح لك بتحصيل مديونيتك الشخصية.');
     }
 
-    // التحقق من صحة المبلغ
-    if ($amount > $debt->amount) {
-        return back()->with('error', 'مبلغ التحصيل غير صالح.');
+    try {
+        app(EmployeeOperationService::class)->collectDebt(
+            $debt,
+            (float) $validated['amount'],
+            app(EmployeeOperationService::class)->actorFromCurrentAuth(),
+            ['use_shift_gap_date' => true, 'notify_store_owner' => true]
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
     }
-
-    // 🔥 منع التكرار (عمليات اليوم فقط)
-    $exists = Debt::where('store_id', $person->store_id)
-        ->where('person_id', $person->id)
-        ->where('amount', -$amount)
-        ->where('description', 'تحصيل جزئي')
-        ->whereDate('created_at', today())
-        ->exists();
-
-    if ($exists) {
-        return back()->with('error', 'تم تسجيل هذا التحصيل مسبقًا اليوم.');
-    }
-
-    // 1) إنشاء عملية التحصيل
-    $person->debts()->create([
-        'store_id'    => $person->store_id,
-        'person_id'   => $person->id,
-        'person_type' => Employee::class,
-        'amount'      => -$amount,
-        'description' => 'تحصيل جزئي',
-        'date'        => now()->toDateString(),
-        'status'      => 'pending',
-        'month'       => now()->format('Y-m'),
-        'added_by'    => $accountant->id,
-    ]);
-
-    // 2) تعديل المديونية الأصلية فقط.
-    // لا نجمع سجل التحصيل السالب مع المتبقي حتى لا يظهر الدين صفرًا عند التحصيل الجزئي.
-    $remainingAmount = $debt->amount - $amount;
-    $debt->update([
-        'amount' => $remainingAmount,
-        'status' => $remainingAmount <= 0 ? 'cleared' : 'pending',
-    ]);
-
-    // 3) تسجيل لوق
-    EmployeeLogService::add(
-        $person,
-        'debt_collect_partial',
-        "تحصيل جزئي بقيمة {$amount} ريال",
-        $amount,
-        'operation'
-    );
-
-    LogHelper::add(
-        'employee_debt_collect_partial',
-        "قام المحاسب {$accountant->name} بتحصيل جزئي بقيمة {$amount} ريال من مديونية الموظف {$person->name}",
-        $person->store_id
-    );
-
-    // 4) إرسال إشعار لصاحب المتجر
-    Notification::create([
-        'sender_id'    => $accountant->id,
-        'sender_type'  => 'accountant',
-        'target_type'  => 'user',
-        'target_ids'   => [$person->store->user->id],
-        'title'        => 'تحصيل جزئي للمديونية',
-        'message'      => "قام المحاسب {$accountant->name} بتحصيل مبلغ {$amount} ريال من مديونية الموظف {$person->name}",
-        'template_key' => 'debt_collect_partial',
-        'channel'      => 'CARLED',
-    ]);
 
     return back()->with('success', 'تم التحصيل الجزئي بنجاح');
 }
@@ -525,73 +304,24 @@ public function collectFull($debtId)
     $this->authorizePerson($person);
     $accountant = auth('accountant')->user();
 
-    // 🔥 منع المحاسب من تحصيل مديونيته الشخصية
     if ($person->id == $accountant->employee_id) {
         return back()->with('error', 'غير مصرح لك بتحصيل مديونيتك الشخصية.');
     }
 
-    // 🔥 منع التكرار (عمليات اليوم فقط)
-    $exists = Debt::where('store_id', $person->store_id)
-        ->where('person_id', $person->id)
-        ->where('amount', -$debt->amount)
-        ->where('description', 'تحصيل كامل')
-        ->whereDate('created_at', today())
-        ->exists();
-
-    if ($exists) {
-        return back()->with('error', 'تم تحصيل هذه العملية مسبقًا اليوم.');
+    try {
+        app(EmployeeOperationService::class)->collectDebt(
+            $debt,
+            (float) $debt->amount,
+            app(EmployeeOperationService::class)->actorFromCurrentAuth(),
+            ['use_shift_gap_date' => true, 'notify_store_owner' => true, 'full' => true]
+        );
+    } catch (EmployeeOperationException $exception) {
+        return back()->with('error', $exception->getMessage());
     }
-
-    $collectedAmount = $debt->amount;
-
-    // 1) إنشاء عملية التحصيل
-    $person->debts()->create([
-        'store_id'    => $person->store_id,
-        'person_id'   => $person->id,
-        'person_type' => Employee::class,
-        'amount'      => -$collectedAmount,
-        'description' => 'تحصيل كامل',
-        'date'        => now()->toDateString(),
-        'status'      => 'pending',
-        'month'       => now()->format('Y-m'),
-        'added_by'    => $accountant->id,
-    ]);
-
-    // 2) تصفير المديونية الأصلية مع إبقاء سجل التحصيل كسجل مستقل للتاريخ.
-    $debt->update([
-        'amount' => 0,
-        'status' => 'cleared',
-    ]);
-
-    // 3) تسجيل لوق
-    EmployeeLogService::add(
-        $person,
-        'debt_collect_full',
-        "تحصيل كامل بقيمة {$collectedAmount} ريال",
-        $collectedAmount,
-        'operation'
-    );
-
-    LogHelper::add(
-        'employee_debt_collect_full',
-        "قام المحاسب {$accountant->name} بتحصيل كامل مديونية الموظف {$person->name} بمبلغ {$collectedAmount} ريال",
-        $person->store_id
-    );
-
-    // 4) إرسال إشعار لصاحب المتجر
-    Notification::create([
-        'sender_id'    => $accountant->id,
-        'sender_type'  => 'accountant',
-        'target_type'  => 'user',
-        'target_ids'   => [$person->store->user->id],
-        'title'        => 'تحصيل كامل للمديونية',
-        'message'      => "قام المحاسب {$accountant->name} بتحصيل كامل مديونية الموظف {$person->name} بمبلغ {$collectedAmount} ريال",
-        'template_key' => 'debt_collect_full',
-        'channel'      => 'CARLED',
-    ]);
 
     return back()->with('success', 'تم التحصيل الكامل بنجاح');
 }
+
 
 
 
@@ -630,7 +360,7 @@ public function withdrawalPage()
     $people = Employee::where('store_id', $storeId)->get();
 
     $lastWithdrawals = Withdrawal::where('store_id', $storeId)
-        ->whereDate('created_at', today())   // 👈 عمليات اليوم فقط
+        ->forAccountingDate(today()->toDateString())
         ->latest()
         ->get();
 
@@ -649,7 +379,7 @@ public function withdrawalPage()
         });
 
     $lastAbsences = Absence::where('store_id', $storeId)
-        ->whereDate('created_at', today())   // 👈 عمليات اليوم فقط
+        ->forOperationDate(today()->toDateString())
         ->orderBy('created_at', 'desc')
         ->get();
 
@@ -675,7 +405,7 @@ public function withdrawalPage()
         ->get();
 
     $lastDebts = Debt::where('store_id', $storeId)
-        ->whereDate('created_at', today())   // 👈 عمليات اليوم فقط
+        ->forOperationDate(today()->toDateString())
         ->with(['person', 'addedBy'])
         ->orderBy('created_at', 'desc')
         ->get();
@@ -690,7 +420,7 @@ public function withdrawalPage()
     $people = Employee::where('store_id', $storeId)->get();
 
     $lastCreditSales = CreditSale::where('store_id', $storeId)
-        ->whereDate('created_at', today())   // 👈 عمليات اليوم فقط
+        ->forOperationDate(today()->toDateString())
         ->orderBy('created_at', 'desc')
         ->get();
 
